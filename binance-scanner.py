@@ -36,7 +36,7 @@ TEST_MODE = False
 with open('/root/.openclaw/workspace/binance-futures/futures_symbols.json') as f:
     SYMBOLS = json.load(f)
 
-SYMBOLS = [s for s in SYMBOLS if 'USDT' in s and 'USDC' not in s and len(s) < 20][:40]
+SYMBOLS = [s for s in SYMBOLS if 'USDT' in s and 'USDC' not in s and len(s) < 20][:80]
 
 def get_signature(params):
     return hmac.new(SECRET.encode(), params.encode(), hashlib.sha256).hexdigest()
