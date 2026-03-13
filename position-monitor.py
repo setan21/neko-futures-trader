@@ -7,9 +7,10 @@ Triggers immediate scan when positions close
 import hmac, hashlib, time, requests, json, os
 from datetime import datetime
 
-API_KEY = 'Vi9YDQ8qFK4a3he1vbv9gXFYYok75CK3GlU21LmkPZRf0Y8dAWQicqtKic8AEKPp'
-SECRET = 'f6wzxpMtieMkEqBLxDwswocfQCvSSpxEFbggF9T9s6zjYet62NlXfHKCxQq4pdN7'
-TELEGRAM_CHANNEL = "-1003847994290"
+# Config - Load from environment variables
+API_KEY = os.environ.get("BINANCE_API_KEY", "")
+SECRET = os.environ.get("BINANCE_SECRET", "")
+TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "-1003847994290")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 STATE_FILE = '/root/.openclaw/workspace/.position_state.json'
