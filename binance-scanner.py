@@ -208,6 +208,77 @@ def calculate_atr(candles, period=14):
     except:
         return None
 
+def detect_candlestick_patterns(candles, closes):
+    """Detect multiple candlestick patterns"""
+    if len(candles) < 3:
+        return ""
+    
+    patterns = []
+    c1 = candles[-3]  # [open, high, low, close, volume]
+    c2 = candles[-2]
+    c3 = candles[-1]
+    
+    # Previous candle for context
+    prev = candles[-4] if len(candles) >= 4 else c2
+    
+    # Calculate candle properties
+    def get_props(c):
+        return {'open': c[0], 'high': c[1], 'low': c[2], 'close': c[3]}
+    
+    p1, p2, p3 = get_props(c1), get_props(c2), get_props(c3)
+    
+    # INSIDE BAR
+    if p3['low'] > p2['low'] and p3['high'] < p2['high']:
+        patterns.append("INSIDE_BAR")
+    
+    # BULLISH ENGULFING
+    if p2['close'] < p2['open'] and p3['close'] > p3['open']:  # Red then green
+        if p3['open'] < p2['close'] and p3['close'] > p2['open']:  # Engulfing
+            patterns.append("BULLISH_ENGULFING")
+    
+    # BEARISH ENGULFING
+    if p2['close'] > p2['open'] and p3['close'] < p3['open']:  # Green then red
+        if p3['open'] > p2['close'] and p3['close'] < p2['open']:  # Engulfing
+            patterns.append("BEARISH_ENGULFING")
+    
+    # BULLISH PIN BAR (Hammer-like)
+    body3 = abs(p3['close'] - p3['open'])
+    lower_wick3 = p3['open'] - p3['low'] if p3['close'] > p3['open'] else p3['close'] - p3['low']
+    upper_wick3 = p3['high'] - p3['close'] if p3['close'] > p3['open'] else p3['high'] - p3['open']
+    if lower_wick3 > body3 * 2 and upper_wick3 < body3 * 0.5:
+        patterns.append("BULLISH_PINBAR")
+    
+    # BEARISH PIN BAR (Shooting star)
+    if upper_wick3 > body3 * 2 and lower_wick3 < body3 * 0.5:
+        patterns.append("BEARISH_PINBAR")
+    
+    # DOJI
+    body = abs(p3['close'] - p3['open'])
+    total_range = p3['high'] - p3['low']
+    if total_range > 0 and body / total_range < 0.1:
+        patterns.append("DOJI")
+    
+    # MORNING STAR (3 candles)
+    if len(candles) >= 4:
+        p0 = get_props(prev)
+        # First candle: red/down
+        # Second candle: small body (doji-like)
+        # Third candle: green with body covering first
+        if p0['close'] < p0['open'] and p2['close'] < p2['open'] and p3['close'] > p3['open']:
+            if p2['high'] - p2['low'] < (p0['high'] - p0['low']) * 0.3:  # Small middle
+                if p3['close'] > (p0['open'] + p0['close']) / 2:  # Above midpoint
+                    patterns.append("MORNING_STAR")
+    
+    # EVENING STAR (reverse of morning)
+    if len(candles) >= 4:
+        p0 = get_props(prev)
+        if p0['close'] > p0['open'] and p2['close'] > p2['open'] and p3['close'] < p3['open']:
+            if p2['high'] - p2['low'] < (p0['high'] - p0['low']) * 0.3:
+                if p3['close'] < (p0['open'] + p0['close']) / 2:
+                    patterns.append("EVENING_STAR")
+    
+    return ", ".join(patterns) if patterns else ""
+
 def check_market_structure(candles):
     if len(candles) < 20:
         return None
@@ -353,11 +424,8 @@ def analyze_technical(symbol, stats, candles, closes):
         atr = calculate_atr(candles, 14) or 0
         vol_data = get_volume_data(symbol)
         
-        # Pattern
-        pattern = ""
-        if len(candles) >= 3:
-            if candles[-1][2] > candles[-2][2] and candles[-1][1] < candles[-2][1]:
-                pattern = "INSIDE_BAR"
+        # Detect multiple candlestick patterns
+        patterns = detect_candlestick_patterns(candles, closes)
         
         return {
             'strategy': 'TECHNICAL',
@@ -379,7 +447,7 @@ def analyze_technical(symbol, stats, candles, closes):
             'resistance': resistance,
             'range': range_height,
             'volume_info': "Volume Spike" if vol_data.get('spike') else "",
-            'pattern_info': pattern,
+            'pattern_info': patterns,
             'insight': insight
         }
     except:
