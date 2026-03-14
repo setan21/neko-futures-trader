@@ -384,18 +384,94 @@ def detect_candlestick_patterns(candles, closes):
     return ", ".join(patterns) if patterns else ""
 
 def check_market_structure(candles):
-    if len(candles) < 20:
-        return None
-    highs = [c[1] for c in candles[-20:]]
-    lows = [c[2] for c in candles[-20:]]
-    recent_highs, recent_lows = highs[-5:], lows[-5:]
+    """Enhanced market structure detection"""
+    if len(candles) < 30:
+        return {'structure': 'N/A', 'detail': ''}
+    
+    highs = [c[1] for c in candles[-30:]]
+    lows = [c[2] for c in candles[-30:]]
+    closes = [c[3] for c in candles[-30:]]
+    
+    recent_highs = highs[-10:]
+    recent_lows = lows[-10:]
+    current = closes[-1]
+    
+    # Basic HH/HL/LH/LL
     hh = recent_highs[-1] > recent_highs[-2] > recent_highs[-3]
     hl = recent_lows[-1] > recent_lows[-2] > recent_lows[-3]
     lh = recent_highs[-1] < recent_highs[-2] < recent_highs[-3]
     ll = recent_lows[-1] < recent_lows[-2] < recent_lows[-3]
-    if hh and hl: return "UPTREND"
-    elif lh and ll: return "DOWNTREND"
-    return "CONSOLIDATION"
+    
+    # Basic trend
+    if hh and hl:
+        structure = "UPTREND"
+    elif lh and ll:
+        structure = "DOWNTREND"
+    else:
+        structure = "CONSOLIDATION"
+    
+    # Additional patterns
+    detail_parts = []
+    
+    # BREAKOUT - price breaks recent high
+    if len(highs) >= 5:
+        if current > max(highs[-5:-1]):
+            detail_parts.append("BREAKOUT")
+    
+    # BREAKDOWN - price breaks recent low
+    if len(lows) >= 5:
+        if current < min(lows[-5:-1]):
+            detail_parts.append("BREAKDOWN")
+    
+    # DOUBLE TOP - two highs near same level
+    if len(recent_highs) >= 6:
+        if abs(recent_highs[-1] - recent_highs[-3]) / recent_highs[-1] < 0.02:  # within 2%
+            if recent_highs[-1] > recent_highs[-2]:
+                detail_parts.append("DOUBLE_TOP")
+    
+    # DOUBLE BOTTOM - two lows near same level
+    if len(recent_lows) >= 6:
+        if abs(recent_lows[-1] - recent_lows[-3]) / recent_lows[-1] < 0.02:
+            if recent_lows[-1] < recent_lows[-2]:
+                detail_parts.append("DOUBLE_BOTTOM")
+    
+    # ASCENDING TRIANGLE - flat resistance, higher lows
+    if len(recent_highs) >= 5 and len(recent_lows) >= 5:
+        res_range = max(recent_highs[-5:]) - min(recent_highs[-5:])
+        sup_range = max(recent_lows[-5:]) - min(recent_lows[-5:])
+        # Higher lows
+        higher_lows = all(recent_lows[-(i+1)] > recent_lows[-(i+2)] for i in range(3))
+        # Flat resistance
+        flat_res = res_range < sup_range * 0.5
+        if higher_lows and flat_res:
+            detail_parts.append("ASCENDING_TRIANGLE")
+    
+    # DESCENDING TRIANGLE - flat support, lower highs
+    if len(recent_highs) >= 5 and len(recent_lows) >= 5:
+        res_range = max(recent_highs[-5:]) - min(recent_highs[-5:])
+        sup_range = max(recent_lows[-5:]) - min(recent_lows[-5:])
+        lower_highs = all(recent_highs[-(i+1)] < recent_highs[-(i+2)] for i in range(3))
+        flat_sup = sup_range < res_range * 0.5
+        if lower_highs and flat_sup:
+            detail_parts.append("DESCENDING_TRIANGLE")
+    
+    # WEDGE - converging highs and lows
+    if len(recent_highs) >= 5 and len(recent_lows) >= 5:
+        high_slope = recent_highs[-1] - recent_highs[-5]
+        low_slope = recent_lows[-1] - recent_lows[-5]
+        if high_slope < 0 and low_slope > 0:
+            detail_parts.append("WEDGE")
+    
+    # CHANNEL - parallel highs and lows
+    if len(recent_highs) >= 5 and len(recent_lows) >= 5:
+        high_range = max(recent_highs) - min(recent_highs)
+        low_range = max(recent_lows) - min(recent_lows)
+        if abs(high_range - low_range) / high_range < 0.3:
+            detail_parts.append("CHANNEL")
+    
+    detail = ", ".join(detail_parts) if detail_parts else ""
+    
+    return {'structure': structure, 'detail': detail}
 
 def analyze_momentum(symbol, stats, candles, closes):
     if not USE_MOMENTUM:
@@ -474,7 +550,9 @@ def analyze_technical(symbol, stats, candles, closes):
         if not ema_21 or not ema_50 or not ema_200:
             return None
         
-        structure = check_market_structure(candles)
+        struct = check_market_structure(candles)
+        structure = struct.get('structure', 'N/A')
+        structure_detail = struct.get('detail', '')
         
         resistance = max(highs[-50:])
         support = min(lows[-50:])
@@ -555,6 +633,7 @@ def analyze_technical(symbol, stats, candles, closes):
             'ema_200': ema_200,
             'trend': trend,
             'structure': structure,
+            'structure_detail': structure_detail,
             'support': support,
             'resistance': resistance,
             'range': range_height,
@@ -581,7 +660,7 @@ def format_signal(analysis, order_result=None):
         msg += "📐 MULTI-TF CONFIRMATION:\n"
         msg += "• Trend 1H: {}\n".format(s.get('trend', 'N/A'))
         msg += "• Trend 4H: {}\n".format(s.get('trend_4h', 'N/A'))
-        msg += "• Structure 1H: {}\n".format(s.get('structure', 'N/A'))
+        msg += "• Structure 1H: {} {}\n".format(s.get('structure', 'N/A'), '(' + s.get('structure_detail', '') + ')' if s.get('structure_detail', '') else '')
         msg += "• Structure 4H: {}\n".format(s.get('structure_4h', 'N/A'))
         msg += "📊 24h Change: {:.2f}%\n\n".format(s.get('change_24h', 0))
         
