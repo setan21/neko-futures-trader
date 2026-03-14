@@ -173,13 +173,63 @@ def get_klines(symbol, interval='1h', limit=200):
         return []
 
 def get_volume_data(symbol, interval='1h', limit=50):
+    """Get comprehensive volume analysis"""
     candles = get_klines(symbol, interval, limit)
     if not candles:
-        return {}
+        return {'volume_info': '', 'obv': 0, 'vwap': 0}
+    
     volumes = [c[4] for c in candles]
+    closes = [c[3] for c in candles]
+    
     avg_volume = sum(volumes) / len(volumes) if volumes else 0
     recent_avg = sum(volumes[-5:]) / 5 if volumes else 0
-    return {'avg_volume': avg_volume, 'recent_volume': recent_avg, 'spike': recent_avg > avg_volume * 1.5}
+    
+    # Volume spike/drop
+    spike = recent_avg > avg_volume * 1.5
+    drop = recent_avg < avg_volume * 0.5
+    
+    # OBV (On Balance Volume)
+    obv = 0
+    for i in range(1, len(candles)):
+        if closes[i] > closes[i-1]:
+            obv += volumes[i]
+        elif closes[i] < closes[i-1]:
+            obv -= volumes[i]
+    
+    # VWAP (Volume Weighted Average Price)
+    vwap = 0
+    tp_sum = 0
+    vol_sum = 0
+    for i in range(-20, 0):
+        typical_price = (candles[i][1] + candles[i][2] + candles[i][3]) / 3
+        tp_sum += typical_price * volumes[i]
+        vol_sum += volumes[i]
+    vwap = tp_sum / vol_sum if vol_sum > 0 else 0
+    
+    # Build volume info string
+    info_parts = []
+    if spike:
+        info_parts.append("VOLUME_SPIKE")
+    if drop:
+        info_parts.append("VOLUME_DROP")
+    if obv > 0:
+        info_parts.append("OBV_UP")
+    elif obv < 0:
+        info_parts.append("OBV_DOWN")
+    if vwap > 0 and closes[-1] > vwap:
+        info_parts.append("PRICE_ABOVE_VWAP")
+    elif vwap > 0 and closes[-1] < vwap:
+        info_parts.append("PRICE_BELOW_VWAP")
+    
+    return {
+        'volume_info': ", ".join(info_parts) if info_parts else "NORMAL",
+        'avg_volume': avg_volume,
+        'recent_volume': recent_avg,
+        'spike': spike,
+        'drop': drop,
+        'obv': obv,
+        'vwap': vwap
+    }
 
 def calculate_ema(prices, period=50):
     if len(prices) < period: return None
