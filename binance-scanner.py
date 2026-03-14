@@ -258,6 +258,60 @@ def calculate_atr(candles, period=14):
     except:
         return None
 
+def get_4h_analysis(symbol):
+    """Get 4H timeframe analysis"""
+    candles_4h = get_klines(symbol, '4h', 100)
+    if not candles_4h or len(candles_4h) < 50:
+        return {'trend': 'N/A', 'structure': 'N/A', 'rsi': 50}
+    
+    closes_4h = [c[3] for c in candles_4h]
+    highs_4h = [c[1] for c in candles_4h]
+    lows_4h = [c[2] for c in candles_4h]
+    
+    # EMA 200
+    ema_200_4h = calculate_ema(closes_4h, 200)
+    ema_50_4h = calculate_ema(closes_4h, 50)
+    
+    # Trend
+    trend = "BULLISH" if closes_4h[-1] > ema_200_4h else "BEARISH" if ema_200_4h else "N/A"
+    
+    # Structure
+    recent_highs = highs_4h[-5:]
+    recent_lows = lows_4h[-5:]
+    hh = recent_highs[-1] > recent_highs[-2] > recent_highs[-3]
+    hl = recent_lows[-1] > recent_lows[-2] > recent_lows[-3]
+    lh = recent_highs[-1] < recent_highs[-2] < recent_highs[-3]
+    ll = recent_lows[-1] < recent_lows[-2] < recent_lows[-3]
+    
+    if hh and hl:
+        structure = "UPTREND"
+    elif lh and ll:
+        structure = "DOWNTREND"
+    else:
+        structure = "CONSOLIDATION"
+    
+    # RSI 4H
+    try:
+        gains, losses = 0, 0
+        for i in range(1, 15):
+            if i >= len(closes_4h): break
+            diff = closes_4h[-i] - closes_4h[-i-1]
+            if diff > 0: gains += diff
+            else: losses -= diff
+        avg_gain = gains/14 if gains else 0
+        avg_loss = losses/14 if losses else 0
+        rsi_4h = 100 - (100/(1+(avg_gain/avg_loss))) if avg_loss > 0 else 50
+    except:
+        rsi_4h = 50
+    
+    return {
+        'trend': trend,
+        'ema_200': ema_200_4h,
+        'ema_50': ema_50_4h,
+        'structure': structure,
+        'rsi': rsi_4h
+    }
+
 def detect_candlestick_patterns(candles, closes):
     """Detect multiple candlestick patterns"""
     if len(candles) < 3:
@@ -377,6 +431,9 @@ def analyze_momentum(symbol, stats, candles, closes):
         vol_data = get_volume_data(symbol)
         vol_confirm = "Volume Spike" if vol_data.get('spike') else ""
         
+        # Get 4H analysis
+        analysis_4h = get_4h_analysis(symbol)
+        
         return {
             'strategy': 'MOMENTUM',
             'symbol': symbol,
@@ -389,7 +446,9 @@ def analyze_momentum(symbol, stats, candles, closes):
             'atr': atr,
             'volume_info': vol_confirm,
             'pattern_info': '',
-            'insight': "HOT COIN - {}% today! Riding momentum. {}".format(price_change, vol_confirm)
+            'trend_4h': analysis_4h.get('trend', 'N/A'),
+            'structure_4h': analysis_4h.get('structure', 'N/A'),
+            'insight': "HOT COIN - {}% today! {} momentum. {}".format(price_change, analysis_4h.get('trend', ''), vol_confirm)
         }
     except:
         return None
@@ -477,6 +536,9 @@ def analyze_technical(symbol, stats, candles, closes):
         # Detect multiple candlestick patterns
         patterns = detect_candlestick_patterns(candles, closes)
         
+        # Get 4H analysis
+        analysis_4h = get_4h_analysis(symbol)
+        
         return {
             'strategy': 'TECHNICAL',
             'symbol': symbol,
@@ -498,6 +560,8 @@ def analyze_technical(symbol, stats, candles, closes):
             'range': range_height,
             'volume_info': "Volume Spike" if vol_data.get('spike') else "",
             'pattern_info': patterns,
+            'trend_4h': analysis_4h.get('trend', 'N/A'),
+            'structure_4h': analysis_4h.get('structure', 'N/A'),
             'insight': insight
         }
     except:
@@ -516,8 +580,9 @@ def format_signal(analysis, order_result=None):
     if s.get('rsi'):
         msg += "📐 MULTI-TF CONFIRMATION:\n"
         msg += "• Trend 1H: {}\n".format(s.get('trend', 'N/A'))
-        msg += "• Trend 4H: N/A\n"
-        msg += "• Structure: {}\n".format(s.get('structure', 'N/A'))
+        msg += "• Trend 4H: {}\n".format(s.get('trend_4h', 'N/A'))
+        msg += "• Structure 1H: {}\n".format(s.get('structure', 'N/A'))
+        msg += "• Structure 4H: {}\n".format(s.get('structure_4h', 'N/A'))
         msg += "📊 24h Change: {:.2f}%\n\n".format(s.get('change_24h', 0))
         
         msg += "📐 INDICATORS:\n"
