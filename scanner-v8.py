@@ -509,8 +509,6 @@ def main():
                     else:
                         msg = format_signal(analysis, stats)
                         msg += f"\n✅ ORDER EXECUTED: {analysis['direction']}\n"
-                        msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
-                        msg += f"📈 TP: ${analysis['tp1']:.6f}\n"
                         msg += f"📋 Order ID: {order_id} | Status: {status}"
                         
                         send_telegram(msg)
