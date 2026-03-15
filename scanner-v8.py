@@ -282,9 +282,70 @@ def analyze_symbol(symbol, stats):
         'runner_score': runner_score
     }
 
+def fetch_brave_news(query, count=2):
+    """Fetch news using Brave Search API"""
+    try:
+        import requests
+        # Using web_search via exec since we can't import it directly
+        # This is a placeholder - in production, use proper API
+        url = f"https://api.search.brave.com/res/v1/web/search?q={query}&count={count}"
+        headers = {
+            "Accept": "application/json",
+            "X-Subscription-Token": BRAVE_API_KEY if 'BRAVE_API_KEY' in dir() else ""
+        }
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get('web', {}).get('results', [])
+            news = []
+            for item in results[:count]:
+                title = item.get('title', '')[:50]
+                if title:
+                    news.append(title)
+            return news if news else None
+    except:
+        pass
+    return None
+
 def get_token_news(symbol, stats):
-    """Get latest info for a token - price action + market context"""
+    """Get latest info for a token - price action + market context + real news"""
     sym = symbol.replace('USDT', '')
+    
+    # Token name mapping for search
+    token_names = {
+        'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'BNB': 'Binance', 'SOL': 'Solana',
+        'XRP': 'XRP Ripple', 'ADA': 'Cardano', 'DOGE': 'Dogecoin', 'AVAX': 'Avalanche',
+        'DOT': 'Polkadot', 'MATIC': 'Polygon', 'LINK': 'Chainlink', 'UNI': 'Uniswap',
+        'ATOM': 'Cosmos', 'LTC': 'Litecoin', 'FIL': 'Filecoin', 'AAVE': 'Aave',
+        'PEPE': 'Pepe crypto', 'SHIB': 'Shiba Inu', 'WIF': 'dogwifhat', 'BONK': 'Bonk',
+        'INJ': 'Injective', 'OP': 'Optimism', 'ARB': 'Arbitrum', 'TIA': 'Celestia',
+        'SUI': 'Sui blockchain', 'SEI': 'Sei blockchain', 'NEAR': 'NEAR Protocol',
+        'APT': 'Aptos', 'RUNE': 'THORChain', 'GRT': 'The Graph', 'ENS': 'Ethereum Name Service',
+        'IMX': 'Immutable X', 'STX': 'Stacks', 'RNDR': 'Render Token',
+        'XAN': 'XANA metaverse', 'AXS': 'Axie Infinity', 'FTM': 'Fantom',
+        'GALA': 'Gala', 'SAND': 'The Sandbox', 'MANA': 'Decentraland',
+        'ALGO': 'Algorand', 'VET': 'VeChain', 'THETA': 'Theta'
+    }
+    
+    # Get real news first
+    token_name = token_names.get(sym, sym)
+    real_news = None
+    try:
+        import requests
+        # Use web search for news
+        brave_url = "https://api.search.brave.com/res/v1/web/search"
+        headers = {"Accept": "application/json"}
+        params = {"q": f"{token_name} crypto news 2026", "count": 2}
+        r = requests.get(brave_url, params=params, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get('web', {}).get('results', [])
+            if results:
+                news_titles = [r.get('title', '')[:45] for r in results[:2] if r.get('title')]
+                if news_titles:
+                    real_news = " | ".join(news_titles)
+    except:
+        pass
     
     # Get stats
     stat = stats.get(symbol, {})
@@ -314,6 +375,10 @@ def get_token_news(symbol, stats):
         context = "📉 Sharp drop"
     else:
         context = "➡️ Sideways"
+    
+    # If we have real news, use it
+    if real_news:
+        return f"📰 {real_news}"
     
     return f"{context} | 24h: {change_24h:+.2f}% | Vol: {vol_str}"
 
