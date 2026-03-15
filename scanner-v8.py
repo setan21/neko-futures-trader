@@ -17,6 +17,7 @@ SECRET = os.environ.get('BINANCE_SECRET', 'rKUgMVksTn3qeUk0jl1aau8lS4LShOR2ILoSy
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8531470868:AAFGiL0bo1O57FAjXRmGTW0ZZrYE3hb0ZB8')
 TELEGRAM_CHANNEL = os.environ.get('TELEGRAM_CHANNEL', '-1003847994290')
+BRAVE_API_KEY = os.environ.get('BRAVE_API_KEY', '')
 
 LEVERAGE = 10
 MAX_POSITIONS = 8
@@ -286,13 +287,9 @@ def fetch_brave_news(query, count=2):
     """Fetch news using Brave Search API"""
     try:
         import requests
-        # Using web_search via exec since we can't import it directly
-        # This is a placeholder - in production, use proper API
+        brave_key = os.environ.get('BRAVE_API_KEY', '')
         url = f"https://api.search.brave.com/res/v1/web/search?q={query}&count={count}"
-        headers = {
-            "Accept": "application/json",
-            "X-Subscription-Token": BRAVE_API_KEY if 'BRAVE_API_KEY' in dir() else ""
-        }
+        headers = {"Accept": "application/json", "X-Subscription-Token": brave_key}
         r = requests.get(url, headers=headers, timeout=5)
         if r.status_code == 200:
             data = r.json()
