@@ -1,19 +1,14 @@
 ---
 name: neko-futures-trader
 description: |
-  Automated Binance Futures trading with professional-grade framework. Features:
-  - Multi-timeframe confirmation (1H + 4H)
-  - Market structure analysis (HH/HL/LH/LL)
-  - Volume analysis (spikes & drops)
-  - Candlestick patterns (Engulfing, Pin Bar, Inside Bar)
-  - ATR-based dynamic stop loss
-  - Fibonacci extension targets
-  - EMA trend filtering (EMA-21/50/200)
-  - RSI momentum filter
-  - S/R zone detection
-  - Auto-execute + post to Telegram
-  - Quick rescan when positions close
-  Use when user wants automated futures trading signals or bot trading.
+  Automated Binance Futures trading scanner with runner detection.
+  Features:
+  - Runner detection (volume spike + momentum + breakout)
+  - Real crypto news via Brave Search
+  - Auto SL/TP after position opens
+  - Score-based signal ranking (0-10)
+  - Post signals + execute trades to Telegram
+  Use when user wants automated futures trading signals.
 metadata:
   openclaw:
     emoji: 🐱📈
@@ -24,138 +19,115 @@ metadata:
 
 # Neko Futures Trader 🐱📈
 
-Professional Binance Futures trading automation with multi-timeframe analysis.
+Binance Futures automated scanner with runner detection and real news.
 
-## Setup
+## Quick Start
 
-### Prerequisites
 ```bash
-pip install requests hmac hashlib
+# Clone and setup
+git clone https://github.com/lukmanc405/neko-futures-trader.git
+cd neko-futures-trader
+
+# Create .env file
+cp .env.example .env
+nano .env
 ```
 
-### Environment Variables
-Create `.env` file:
+Edit `.env`:
 ```
-BINANCE_API_KEY=your_api_key
+BINANCE_API_KEY=your_key
 BINANCE_SECRET=your_secret
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHANNEL=-1003847994290
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHANNEL=your_channel_id
 ```
+
+## Run with OpenClaw
+
+```bash
+# Activate skill
+openclaw skill activate neko-futures-trader
+
+# Or run directly
+source .env
+python3 scanner-v8.py
+```
+
+## Runner Detection Criteria
+
+| Criteria | Weight |
+|----------|--------|
+| Volume Spike 3x+ | +2 pts |
+| Volume Spike 2x+ | +1 pt |
+| 24h Change 10%+ | +2 pts |
+| 24h Change 5%+ | +1 pt |
+| 1H Momentum 3%+ | +1 pt |
+| Breakout (new high) | +2 pts |
+
+**Minimum Score: 3/10** to trigger signal
 
 ## Configuration
 
-Edit scanner variables:
+Edit `scanner-v8.py`:
 ```python
 LEVERAGE = 10
 MAX_POSITIONS = 8
-MAX_MARGIN_PERCENT = 40
 ENTRY_PERCENT = 5
-TEST_MODE = False  # Set True for paper trading
+MIN_GAIN = 0.5
 ```
-
-## Trading Framework
-
-### Entry Rules
-1. **Multi-TF Confirmation** — 1H and 4H trends must align
-2. **Market Structure** — Price must show HH/HL (uptrend) or LH/LL (downtrend)
-3. **Volume Analysis** — Detects volume spikes for confirmation
-4. **Candlestick Patterns** — Engulfing, Pin Bar, Inside Bar detection
-5. **EMA Trend** — Price above EMA-200 = uptrend, below = downtrend
-
-### Entry Zones
-- **Support Bounce** — Price within 3% of support (LONG)
-- **Breakout** — Price within 5% of resistance (LONG)
-- **Resistance Rejection** — Price within 3% of resistance (SHORT)
-- **Breakdown** — Price within 5% of support (SHORT)
-
-### Stop Loss
-- **ATR-based** — Dynamic 1.5x ATR below entry
-- **Structure-based** — Below EMA-21 or support/resistance
-
-### Take Profit
-- **TP1:** Entry + (range × 1.272) — Fibonacci extension
-- **TP2:** Entry + (range × 1.618) — Fibonacci extension
 
 ## Signal Template
 
 ```
 🟢 LONG SIGNAL 🟢
 
-📈 BTCUSDT TECHNICAL ANALYSIS 📊
-📊 Chart: https://www.tradingview.com/chart/?symbol=BINANCE:BTCUSDT
+📈 XANUSDT TECHNICAL ANALYSIS 📊
 
 📐 MULTI-TF CONFIRMATION:
 • Trend 1H: BULLISH
-• Trend 4H: BULLISH
-• Structure: UPTREND
+• Structure: BREAKOUT
+📊 24h Change: +47.0%
 
 📐 INDICATORS:
-• RSI (14): 45.2
-• EMA 21: 67234.56
-• EMA 50: 66890.12
-• EMA 200: 65123.45
-• ATR: 1234.56
+• RSI (14): 72.5
+• EMA 21: 0.007842
+• ATR: 0.000892
 
-🔊 VOLUME: ⚡ Volume Spike
-🕯 PATTERNS: BULLISH_ENGULFING
+🔊 VOLUME: Volume Spike (12.8x)
 
-📊 STRUCTURE:
-• Support: 65000.00
-• Resistance: 70000.00
-• Range: 5000.00
+🎯 RUNNER METRICS:
+• 1H Momentum: +24.5%
+• Volume Spike: 12.8x
+• Breakout: ✅ Yes
+• Score: 7/10 🚀
 
-💡 INSIGHT: LONG - Uptrend + Support Bounce + Volume Spike + Bullish Pattern. RSI: 45.2
-🎯 Entry: $67500.00
-📈 TP1: $73863.64 (Fib 1.272)
-📈 TP2: $75618.18 (Fib 1.618)
-🛡 SL: $65500.00 (ATR-based)
-⏰ Timeframe: 1H
+💡 INSIGHT: BREAKOUT | Strong momentum
+🎯 Entry: $0.008950
+📈 TP: $0.011600
+🛡 SL: $0.007800
+
+📰 XANA Price Up 45% Today | Token Surges
+
+✅ ORDER EXECUTED: LONG
 ```
 
-## Running
-
-### Start Scanner
-```bash
-source .env
-python3 scanner.py
-```
-
-### Run in Background
-```bash
-nohup python3 scanner.py > scanner.log 2>&1 &
-```
-
-### Position Monitor
-```bash
-python3 position-monitor.py
-```
-
-## Files
-
-- `scanner.py` — Main scanner + auto-trade
-- `position-monitor.py` — Position watcher + auto-rescan
-- `SKILL.md` — This file
-- `.env.example` — Template
-
-## Safety
-
-⚠️ **Always use TEST_MODE first!**
-
-```python
-TEST_MODE = True  # Paper trading
-TEST_MODE = False  # Real money
-```
-
-## Key Features
+## Features
 
 | Feature | Description |
 |---------|-------------|
-| Multi-TF | 1H + 4H alignment |
-| Structure | HH/HL detection |
-| Volume | Spike/drop detection |
-| Patterns | Engulfing, Pin Bar |
-| ATR SL | Dynamic stop loss |
-| Fib TP | 1.272 / 1.618 extensions |
+| Runner Detection | Volume + momentum + breakout |
+| Real News | Brave Search integration |
+| Auto SL/TP | After position opens |
+| Score System | Rank signals by strength |
+
+## Files
+
+- `scanner-v8.py` — Main scanner
+- `position-monitor.py` — Position watcher
+- `README.md` — Full documentation
+
+## Safety
+
+⚠️ Monitor positions regularly. Understand risks of leveraged trading.
 
 ---
 *Skill by Neko Sentinel* 🐱🛡️
