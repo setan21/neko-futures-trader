@@ -102,11 +102,16 @@ def place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
     r = requests.post(url, headers=headers, timeout=15)
     result = r.json()
     
-    # Then set stop loss
+    # Then set stop loss - use working price instead of closePosition
     if sl_price:
         sl_side = "SELL" if side == "BUY" else "BUY"
-        sl_params = "symbol={}&side={}&type=STOP_MARKET&stopPrice={}&closePosition=true&timestamp={}".format(
-            symbol, sl_side, sl_price, int(time.time() * 1000))
+        # Get current price for working price
+        r = requests.get(f'https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}', timeout=10)
+        current_price = float(r.json()['price'])
+        sl_price_adj = current_price * 0.99 if side == "BUY" else current_price * 1.01
+        
+        sl_params = "symbol={}&side={}&type=STOP&price={}&stopPrice={}&timeInForce=GTC&quantity={}&timestamp={}".format(
+            symbol, sl_side, round(sl_price_adj, 6), round(sl_price, 6), quantity, int(time.time() * 1000))
         sl_sig = get_signature(sl_params)
         sl_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(sl_params, sl_sig)
         requests.post(sl_url, headers=headers, timeout=15)
@@ -114,8 +119,12 @@ def place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
     # Then set take profit
     if tp_price:
         tp_side = "SELL" if side == "BUY" else "BUY"
-        tp_params = "symbol={}&side={}&type=TAKE_PROFIT_MARKET&stopPrice={}&closePosition=true&timestamp={}".format(
-            symbol, tp_side, tp_price, int(time.time() * 1000))
+        r = requests.get(f'https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}', timeout=10)
+        current_price = float(r.json()['price'])
+        tp_price_adj = current_price * 1.01 if side == "BUY" else current_price * 0.99
+        
+        tp_params = "symbol={}&side={}&type=STOP&price={}&stopPrice={}&timeInForce=GTC&quantity={}&timestamp={}".format(
+            symbol, tp_side, round(tp_price_adj, 6), round(tp_price, 6), quantity, int(time.time() * 1000))
         tp_sig = get_signature(tp_params)
         tp_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(tp_params, tp_sig)
         requests.post(tp_url, headers=headers, timeout=15)
