@@ -133,14 +133,27 @@ def main():
                     close_side = 'SELL' if side == 'LONG' else 'BUY'
                     result = close_position(symbol, close_side, abs(amt))
                     
-                    msg = f"🚨 {hit} TRIGGERED!\n\n"
-                    msg += f"{symbol} {side}\n"
-                    msg += f"Entry: ${entry:.6f}\n"
-                    msg += f"Current: ${current:.6f}\n"
-                    msg += f"SL: ${sl_price:.6f}\n"
-                    msg += f"TP1: ${tp1:.6f}\n"
-                    msg += f"TP2: ${tp2:.6f}\n"
-                    msg += f"\n✅ Position Closed"
+                    # Calculate PnL
+                    if side == 'LONG':
+                        pnl = (current - entry) * abs(amt)
+                        pnl_pct = ((current - entry) / entry) * 100
+                    else:
+                        pnl = (entry - current) * abs(amt)
+                        pnl_pct = ((entry - current) / entry) * 100
+                    
+                    emoji = "🟢" if pnl > 0 else "🔴"
+                    win_loss = "🎉💰 PROFIT TAKEN! 💰🎉" if pnl > 0 else "❌ STOP HIT"
+                    
+                    msg = f"{win_loss}\n\n"
+                    msg += f"{emoji} {symbol} {side}\n"
+                    msg += f"📈 {pnl_pct:+.2f}% (${pnl:+.2f})\n"
+                    msg += f"Entry: ${entry:.6f} → Exit: ${current:.6f}\n"
+                    msg += f"Target: ${tp1:.6f} (TP1) 🎯\n"
+                    
+                    if hit == 'SL':
+                        msg += f"\n#StopLoss #Trading #Crypto"
+                    else:
+                        msg += f"\n#TakeProfit #Winning #Crypto"
                     
                     send_telegram(msg)
                     triggered[symbol] = True
