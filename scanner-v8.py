@@ -12,8 +12,20 @@ import requests
 from datetime import datetime
 
 # === LOAD FROM ENV FILE ===
-env_file = '/root/.openclaw/workspace/binance-futures/.env'
-if os.path.exists(env_file):
+# Try multiple possible locations
+possible_paths = [
+    '/root/.openclaw/workspace/binance-futures/.env',
+    os.path.join(os.path.dirname(__file__), 'binance-futures', '.env'),
+    os.path.join(os.path.dirname(__file__), '.env'),
+    '../binance-futures/.env'
+]
+env_file = None
+for path in possible_paths:
+    if os.path.exists(path):
+        env_file = path
+        break
+
+if env_file and os.path.exists(env_file):
     with open(env_file) as f:
         for line in f:
             line = line.strip()
