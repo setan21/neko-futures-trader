@@ -7,11 +7,11 @@ Triggers immediate scan when positions close
 import hmac, hashlib, time, requests, json, os
 from datetime import datetime
 
-# Config - Load from environment variables
+# Config - Load from environment variables (NO DEFAULTS - user must provide)
 API_KEY = os.environ.get("BINANCE_API_KEY", "")
 SECRET = os.environ.get("BINANCE_SECRET", "")
-TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "-1003847994290")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "")  # Must be set by user
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")  # Must be set by user
 
 STATE_FILE = '/root/.openclaw/workspace/.position_state.json'
 SCAN_INTERVAL = 60  # Check every 60 seconds
@@ -55,9 +55,10 @@ def send_telegram(msg):
         return False
 
 def quick_scan():
-    """Trigger immediate scan"""
+    """Trigger immediate scan using user's configured environment"""
     print("🔍 Quick scan triggered...")
-    os.system('cd /root/.openclaw/workspace && TELEGRAM_BOT_TOKEN=***REDACTED_TELEGRAM_TOKEN*** python3 binance-scanner.py >> /root/.openclaw/workspace/scanner.log 2>&1')
+    # Use user's env variables from .env file
+    os.system('cd /root/.openclaw/workspace/neko-futures-trader && python3 scanner-v8.py >> /root/.openclaw/workspace/scanner.log 2>&1')
 
 def main():
     print("👀 Watching positions...")
