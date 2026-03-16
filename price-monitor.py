@@ -13,18 +13,9 @@ import requests
 from datetime import datetime
 
 # === LOAD FROM ENV FILE ===
-# Try multiple possible locations
-possible_paths = [
-    '/root/.openclaw/workspace/neko-futures-trader/.env',
-    os.path.join(os.path.dirname(__file__), 'binance-futures', '.env'),
-    os.path.join(os.path.dirname(__file__), '.env'),
-    '../binance-futures/.env'
-]
-env_file = None
-for path in possible_paths:
-    if os.path.exists(path):
-        env_file = path
-        break
+# Only load from the same directory as the script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+env_file = os.path.join(script_dir, '.env')
 
 if env_file and os.path.exists(env_file):
     with open(env_file) as f:
