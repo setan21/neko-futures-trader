@@ -5,7 +5,9 @@ description: |
   Features:
   - Runner detection (volume spike + momentum + breakout)
   - Real crypto news via Brave Search
-  - Auto SL/TP after position opens
+  - Fibonacci+ATR based SL/TP
+  - Price monitor (auto-close when SL/TP hit)
+  - Emoji-heavy Telegram alerts
   - Score-based signal ranking (0-10)
   - Post signals + execute trades to Telegram
   - Auto-start on install
@@ -23,119 +25,108 @@ metadata:
 
 # Neko Futures Trader 🐱📈
 
-Binance Futures automated scanner with runner detection and real news.
+Binance Futures automated scanner with price monitor.
 
-## Quick Start (Auto-Run)
+## Scripts
 
-### Option 1: One-Command Install + Run
+| Script | Description |
+|--------|-------------|
+| `scanner-v8.py` | Main scanner - finds runner signals |
+| `price-monitor.py` | Auto-close when SL/TP hit |
+
+## Quick Start
+
 ```bash
 # Install dependencies
 pip install requests hmac hashlib
 
 # Setup .env (see below)
 
-# Auto-start scanner (runs every 5 min)
+# Run scanner (every 5 min)
 cd /root/.openclaw/workspace
-nohup bash -c 'while true; do source binance-futures/.env && python3 scanner-v8.py; echo "---"; sleep 300; done' > scanner.log 2>&1 &
-```
+nohup python3 scanner-v8.py &
 
-### Option 2: Manual Run
-```bash
-source .env
-python3 scanner-v8.py
+# Run price monitor (every 60s)
+nohup python3 price-monitor.py &
 ```
 
 ## Environment Setup
 
 Create `.env` file:
 ```
-BINANCE_API_KEY=your_binance_api_key
-BINANCE_SECRET=your_binance_secret
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+BINANCE_API_KEY=your_key
+BINANCE_SECRET=your_secret
+TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHANNEL=your_channel_id
-BRAVE_API_KEY=your_brave_api_key
+BRAVE_API_KEY=your_brave_key
 ```
 
-## Configuration
+## Fibonacci+ATR SL/TP
 
-Edit `scanner-v8.py`:
-```python
-LEVERAGE = 10
-MAX_POSITIONS = 8
-ENTRY_PERCENT = 5
-MIN_GAIN = 0.5
-```
+| Level | Calculation |
+|-------|-------------|
+| SL | Entry - 1.5×ATR |
+| TP1 | Entry + 3×ATR (Fib 1.272) |
+| TP2 | Entry + 4.5×ATR (Fib 1.618) |
 
-## Signal Template
+## Emoji Alerts
 
+### Scanner Signal
 ```
 🟢 LONG SIGNAL 🟢
 
 📈 XANUSDT TECHNICAL ANALYSIS 📊
-📊 Chart: https://www.tradingview.com/chart/?symbol=BINANCE:XANUSDT
-
-📐 MULTI-TF CONFIRMATION:
-• Trend 1H: BULLISH
-• Structure: BREAKOUT
-📊 24h Change: +47.0%
-
-📐 INDICATORS:
-• RSI (14): 72.5
-• EMA 21: 0.007842
-• EMA 50: 0.006521
-• ATR: 0.000892
-
-🔊 VOLUME: Volume Spike (12.8x)
-
-📊 STRUCTURE:
-• Support: 0.006200
-• Resistance: 0.009500
-
-🎯 RUNNER METRICS:
-• 1H Momentum: +24.5%
-• Volume Spike: 12.8x
-• Breakout: ✅ Yes
-• Score: 7/10 🚀
-
-💡 INSIGHT: BREAKOUT | Strong momentum
-🎯 Entry: $0.008950
-📈 TP: $0.011600
-🛡 SL: $0.007800
+...
 
 📰 Latest News: ...
 
 ✅ ORDER EXECUTED: LONG
 🛡 SL: $0.007800
 📈 TP: $0.011600
-📋 Order ID: 123456789 | Status: NEW
+📋 Order ID: ...
 ```
 
-## Runner Detection Criteria
+### Price Monitor Alert (TP)
+```
+🎉💰 PROFIT TAKEN! 💰🎉
 
-| Criteria | Weight |
-|----------|--------|
-| Volume Spike 3x+ | +2 pts |
-| Volume Spike 2x+ | +1 pt |
-| 24h Change 10%+ | +2 pts |
-| 24h Change 5%+ | +1 pt |
-| 1H Momentum 3%+ | +1 pt |
-| Breakout (new high) | +2 pts |
+🟢 TIAUSDT LONG
+📈 +5.02% ($5.02)
+Entry: $0.364600 → Exit: $0.382940
+Target: $0.390323 (TP1) 🎯
 
-**Min Score: 3/10** to trigger
+#TakeProfit #Winning #Crypto
+```
 
-## Commands
+### Price Monitor Alert (SL)
+```
+❌ STOP HIT
 
-| Action | Command |
-|--------|---------|
-| Start Scanner | `python3 scanner-v8.py` |
-| Background | `nohup python3 scanner-v8.py &` |
-| Check Log | `tail -f scanner.log` |
-| Check Positions | `python3 -c "import requests,hmac,hashlib,time; ..."` |
+🔴 AXSUSDT LONG
+📈 -3.12% (-$3.50)
+Entry: $1.237000 → Exit: $1.199000
+Target: $1.199890 (SL) 🎯
+
+#StopLoss #Trading #Crypto
+```
+
+## Configuration
+
+```python
+# scanner-v8.py
+LEVERAGE = 10
+MAX_POSITIONS = 8
+ENTRY_PERCENT = 5
+MIN_GAIN = 0.5
+
+# price-monitor.py
+CHECK_INTERVAL = 60  # seconds
+```
 
 ## Files
 
 - `scanner-v8.py` - Main scanner
-- `position-monitor.py` - Position watcher
+- `price-monitor.py` - Price monitor (auto-close)
 - `README.md` - Full docs
 
 ## Safety
