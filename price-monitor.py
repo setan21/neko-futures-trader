@@ -154,24 +154,38 @@ def main():
                 # Debug: print levels
                 print(f"  {symbol}: Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP1={tp1:.6f} TP2={tp2:.6f} ATR={atr:.6f}")
                 
-                # Check if SL/TP hit with BUFFER (be more accurate)
+                # Check if SL/TP hit - STRICT logic
+                # For LONG: SL must be BELOW entry, TP must be ABOVE entry
+                # For SHORT: SL must be ABOVE entry, TP must be BELOW entry
                 hit = None
                 target_price = 0
+                
                 if side == 'LONG':
-                    # For LONG: SL is below entry, TP is above entry
-                    # Use small buffer (0.5% of ATR) to confirm
-                    if current <= sl_price:
+                    # LONG: Entry > SL (SL below entry), Entry < TP (TP above entry)
+                    # SL hit: price goes DOWN to SL (current < sl_price < entry)
+                    # TP hit: price goes UP to TP (current > tp1 > entry)
+                    
+                    # STRICT: Only trigger if price has actually moved to the level
+                    if current <= sl_price and sl_price < entry:
+                        # Price dropped below SL
                         hit = 'SL'
                         target_price = sl_price
-                    elif current >= tp1:
+                    elif current >= tp1 and tp1 > entry:
+                        # Price rose above TP1
                         hit = 'TP'
                         target_price = tp1
+                        
                 else:  # SHORT
-                    # For SHORT: SL is above entry, TP is below entry
-                    if current >= sl_price:
+                    # SHORT: Entry < SL (SL above entry), Entry > TP (TP below entry)
+                    # SL hit: price goes UP to SL (current > sl_price > entry)
+                    # TP hit: price goes DOWN to TP (current < tp1 < entry)
+                    
+                    if current >= sl_price and sl_price > entry:
+                        # Price rose above SL
                         hit = 'SL'
                         target_price = sl_price
-                    elif current <= tp1:
+                    elif current <= tp1 and tp1 < entry:
+                        # Price dropped below TP1
                         hit = 'TP'
                         target_price = tp1
                 
@@ -182,21 +196,21 @@ def main():
                     time.sleep(2)
                     current_check = get_price(symbol)
                     
-                    # Verify hit still valid
+                    # STRICT verification - must still be at the level
                     still_hit = False
                     if side == 'LONG':
-                        if hit == 'SL' and current_check <= sl_price:
+                        if hit == 'SL' and current_check <= sl_price and sl_price < entry:
                             still_hit = True
-                        elif hit == 'TP' and current_check >= tp1:
+                        elif hit == 'TP' and current_check >= tp1 and tp1 > entry:
                             still_hit = True
                     else:
-                        if hit == 'SL' and current_check >= sl_price:
+                        if hit == 'SL' and current_check >= sl_price and sl_price > entry:
                             still_hit = True
-                        elif hit == 'TP' and current_check <= tp1:
+                        elif hit == 'TP' and current_check <= tp1 and tp1 < entry:
                             still_hit = True
                     
                     if not still_hit:
-                        print(f"  ⚠️ False alarm - price recovered")
+                        print(f"  ⚠️ False alarm - price recovered. Current={current_check:.6f} Entry={entry:.6f}")
                         triggered[symbol] = hit  # Mark as checked
                         continue
                     
