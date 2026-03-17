@@ -247,8 +247,28 @@ The scanner finds momentum runners using these weights:
 | 24h Change 5%+ | +1 pt | Optional |
 | 1H Momentum 3%+ | +1 pt | Optional |
 | Breakout (new high) | +2 pts | Optional |
+| **OI Spike 20%+** | +2 pts | Optional |
+| **OI Spike 10%+** | +1 pt | Optional |
 
 **Minimum Score: 3/10** to trigger a signal
+
+## Open Interest (OI) Integration
+
+The scanner now includes **Open Interest** data for better signal accuracy:
+
+- Fetches OI from Binance API
+- Detects OI spikes (unusual activity)
+- Bonus points for OI spikes in scoring
+- Shows OI and OI change in signal alerts
+
+**OI Signal Rules:**
+- OI spike 20%+ → +2 points
+- OI spike 10%+ → +1 point
+
+This helps identify:
+- Breakout signals
+- Trapped FOMO traders
+- Trend strength/weakness
 
 ---
 
