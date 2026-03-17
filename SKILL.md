@@ -4,7 +4,8 @@ description: |
   Automated Binance Futures trading scanner with runner detection and price monitor.
   
   Features:
-  - Runner detection (volume spike + momentum + breakout)
+  - Runner detection (volume spike + momentum + breakout + OI spike)
+  - Open Interest (OI) integration for better signals
   - Real crypto news via Brave Search
   - Fibonacci+ATR based SL/TP
   - Price monitor (auto-close when SL/TP hit)
@@ -196,8 +197,17 @@ CHECK_INTERVAL = 60      # Seconds between checks
 | 24h Change 5%+ | +1 |
 | 1H Momentum 3%+ | +1 |
 | Breakout | +2 |
+| **OI Spike 20%+** | +2 |
+| **OI Spike 10%+** | +1 |
 
 Minimum: 3/10 to trigger
+
+## Open Interest (OI)
+
+Scanner fetches OI from Binance API:
+- Detects OI spikes for breakout signals
+- Shows OI and OI change in alerts
+- Bonus scoring for OI activity
 
 ## Files
 
