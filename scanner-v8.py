@@ -294,10 +294,13 @@ def analyze_symbol(symbol, stats):
     # 2. 1H Momentum (continuation)
     change_1h = ((closes[-1] - closes[-6]) / closes[-6]) * 100 if len(closes) >= 6 else 0
     
-    # 3. Breakout (breaking recent high)
+    # 3. Breakout/Breakdown (breaking recent high/low)
     recent_high = max(highs[-10:])
     prev_high = max(highs[-20:-10]) if len(highs) >= 20 else max(highs[:-10])
-    breakout = recent_high > prev_high * 1.02  # 2% above
+    recent_low = min(lows[-10:])
+    prev_low = min(lows[-20:-10]) if len(lows) >= 20 else min(lows[:-10])
+    breakout = recent_high > prev_high * 1.02  # 2% above for LONG
+    breakdown = recent_low < prev_low * 0.98  # 2% below for SHORT
     
     # 4. Open Interest - use enhanced OI history
     oi_data = get_oi_history(symbol)
@@ -313,17 +316,19 @@ def analyze_symbol(symbol, stats):
     elif price_change > 5: runner_score += 1
     if abs(change_1h) > 3: runner_score += 1
     if breakout: runner_score += 2
+    if breakdown: runner_score += 2
     # OI spike bonus
     if oi_change > 20: runner_score += 2
     elif oi_change > 10: runner_score += 1
     if oi_trend == 'up' and price_change > 0: runner_score += 1  # OI + price up = bullish
+    if oi_trend == 'down' and price_change < 0: runner_score += 1  # OI + price down = bearish
     
     # Must have at least score 3 for signal
     if runner_score < 3:
         return None
     
-    # Must have positive change for LONG
-    if price_change <= 0:
+    # Must have significant change for signal (either direction)
+    if abs(price_change) < 3:
         return None
     
     # EMAs
@@ -335,20 +340,34 @@ def analyze_symbol(symbol, stats):
     # ATR for SL/TP
     atr = calc_atr(candles, 14) or (current * 0.02)
     
-    # Direction - LONG only for runners
-    direction = "LONG"
-    sl = current - (atr * 1.5)
-    tp1 = current + (atr * 3.0)
-    tp2 = current + (atr * 4.5)
+    # Direction - Detect LONG or SHORT based on momentum
+    if price_change > 0:
+        direction = "LONG"
+    else:
+        direction = "SHORT"
+    
+    # Calculate SL/TP based on direction
+    if direction == "LONG":
+        sl = current - (atr * 1.5)
+        tp1 = current + (atr * 3.0)
+        tp2 = current + (atr * 4.5)
+    else:  # SHORT
+        sl = current + (atr * 1.5)
+        tp1 = current - (atr * 3.0)
+        tp2 = current - (atr * 4.5)
     
     # Trend
     trend = "BULLISH" if current > ema_50 else "BEARISH"
     
     # Structure
-    if breakout:
+    if breakout and direction == "LONG":
         structure = "BREAKOUT"
+    elif breakout and direction == "SHORT":
+        structure = "BREAKDOWN"
     elif price_change > 10:
         structure = "STRONG_MOMENTUM"
+    elif price_change < -10:
+        structure = "STRONG_DOWNSIDE"
     else:
         structure = "MOMENTUM"
     
