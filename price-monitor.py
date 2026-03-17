@@ -61,6 +61,29 @@ def load_positions_sl_tp():
         pass
     return {}
 
+def get_atr(symbol, period=14):
+    """Get ATR for SL/TP calculation - Template: 1h period"""
+    try:
+        r = requests.get(f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit={period+1}', timeout=10)
+        candles = r.json()
+        
+        if len(candles) < period + 1:
+            return None
+        
+        trs = []
+        for i in range(1, len(candles)):
+            high = float(candles[i][2])  # High
+            low = float(candles[i][3])    # Low
+            prev_close = float(candles[i-1][4])  # Previous close
+            
+            # True Range = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            trs.append(tr)
+        
+        return sum(trs) / len(trs) if trs else None
+    except:
+        return None
+
 def save_positions_sl_tp(data):
     try:
         with open(POSITIONS_FILE, 'w') as f:
@@ -123,16 +146,28 @@ def main():
                 
                 side = 'LONG' if amt > 0 else 'SHORT'
                 
-                # Get SL/TP from saved data
+                # Get SL/TP from saved data, or calculate from ATR
                 pos_data = saved_data.get(symbol, {})
                 
-                if not pos_data or 'sl' not in pos_data or 'tp1' not in pos_data:
-                    continue  # No SL/TP data, skip
-                
-                sl_price = float(pos_data['sl'])
-                tp_price = float(pos_data['tp1'])
-                
-                print(f"  {symbol}: Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP={tp_price:.6f}")
+                if pos_data and 'sl' in pos_data and 'tp1' in pos_data:
+                    # Use saved SL/TP from scanner
+                    sl_price = float(pos_data['sl'])
+                    tp_price = float(pos_data['tp1'])
+                    print(f"  {symbol}: [SAVED] Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP={tp_price:.6f}")
+                else:
+                    # Calculate SL/TP from ATR (template formula)
+                    atr = get_atr(symbol)
+                    if not atr:
+                        atr = entry * 0.02  # Default 2%
+                    
+                    if side == 'LONG':
+                        sl_price = entry - (atr * 1.5)  # Template: Entry - 1.5×ATR
+                        tp_price = entry + (atr * 3.0)   # Template: Entry + 3×ATR
+                    else:  # SHORT
+                        sl_price = entry + (atr * 1.5)
+                        tp_price = entry - (atr * 3.0)
+                    
+                    print(f"  {symbol}: [CALC] Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP={tp_price:.6f} (ATR={atr:.6f})")
                 
                 # Check if SL/TP hit
                 hit = None
