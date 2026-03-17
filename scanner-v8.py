@@ -136,6 +136,47 @@ def get_oi_change(symbol, limit=5):
     except:
         return 0
 
+def get_oi_history(symbol, period='1h', limit=24):
+    """Get OI history - more accurate than volume proxy"""
+    try:
+        url = f'https://futures.binance.com/futures/data/openInterestHist?symbol={symbol.replace("USDT","")}&period={period}&limit={limit}'
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data and len(data) > 1:
+            # Calculate OI change trend
+            oi_values = [float(d['openInterest']) for d in data]
+            current = oi_values[-1]
+            previous = sum(oi_values[:-1]) / len(oi_values[:-1])
+            if previous > 0:
+                return {
+                    'current': current,
+                    'change_pct': ((current - previous) / previous) * 100,
+                    'trend': 'up' if current > previous else 'down'
+                }
+        return {'current': 0, 'change_pct': 0, 'trend': 'neutral'}
+    except:
+        return {'current': 0, 'change_pct': 0, 'trend': 'neutral'}
+
+def get_mark_price(symbol):
+    """Get mark price for more accurate SL/TP"""
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/markPrice?symbol={symbol}'
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return float(data.get('markPrice', 0))
+    except:
+        return 0
+
+def get_price_v2(symbol):
+    """Get price using v2 endpoint - lower latency"""
+    try:
+        url = f'https://fapi.binance.com/fapi/v2/ticker/price?symbol={symbol}'
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return float(data.get('price', 0))
+    except:
+        return 0
+
 def get_klines(symbol, interval='1h', limit=100):
     url = f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}'
     r = requests.get(url, timeout=15)
@@ -258,9 +299,11 @@ def analyze_symbol(symbol, stats):
     prev_high = max(highs[-20:-10]) if len(highs) >= 20 else max(highs[:-10])
     breakout = recent_high > prev_high * 1.02  # 2% above
     
-    # 4. Open Interest
-    oi = get_open_interest(symbol)
-    oi_change = get_oi_change(symbol)
+    # 4. Open Interest - use enhanced OI history
+    oi_data = get_oi_history(symbol)
+    oi = oi_data.get('current', 0)
+    oi_change = oi_data.get('change_pct', 0)
+    oi_trend = oi_data.get('trend', 'neutral')
     
     # Runner score
     runner_score = 0
@@ -273,6 +316,7 @@ def analyze_symbol(symbol, stats):
     # OI spike bonus
     if oi_change > 20: runner_score += 2
     elif oi_change > 10: runner_score += 1
+    if oi_trend == 'up' and price_change > 0: runner_score += 1  # OI + price up = bullish
     
     # Must have at least score 3 for signal
     if runner_score < 3:
@@ -328,9 +372,6 @@ def analyze_symbol(symbol, stats):
         rsi = 50
     
     # Get Open Interest data
-    oi = get_open_interest(symbol)
-    oi_change = get_oi_change(symbol)
-    
     return {
         'symbol': symbol,
         'direction': direction,
@@ -353,7 +394,8 @@ def analyze_symbol(symbol, stats):
         'breakout': breakout,
         'runner_score': runner_score,
         'oi': oi,
-        'oi_change': oi_change
+        'oi_change': oi_change,
+        'oi_trend': oi_trend
     }
 
 def fetch_brave_news(query, count=2):
@@ -463,8 +505,10 @@ def format_signal(analysis, stats):
     # Format OI
     oi = s.get('oi', 0)
     oi_change = s.get('oi_change', 0)
+    oi_trend = s.get('oi_trend', 'neutral')
     oi_str = f"{oi:,.0f}" if oi else "N/A"
     oi_emoji = "📈" if oi_change > 10 else "📉" if oi_change < -10 else "➡️"
+    trend_emoji = "⬆️" if oi_trend == 'up' else "⬇️" if oi_trend == 'down' else "➡️"
     
     msg = f"""{emoji} {s['direction']} SIGNAL {emoji}
 
@@ -485,6 +529,7 @@ def format_signal(analysis, stats):
 📊 OPEN INTEREST:
 • OI: {oi_str}
 • OI Change: {oi_emoji} {oi_change:+.1f}%
+• OI Trend: {trend_emoji} {oi_trend.upper()}
 
 🔊 VOLUME: {'Volume Spike' if s['vol_spike'] else 'Normal'}
 
