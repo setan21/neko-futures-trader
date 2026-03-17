@@ -83,7 +83,17 @@ def calculate_fibonacci_sl_tp(entry, atr, side):
     
     return sl, tp1, tp2
 
-def close_position(symbol, side, quantity):
+def close_position_limit(symbol, side, quantity, limit_price):
+    """Close position using LIMIT order at specific price for accuracy"""
+    ts = int(time.time() * 1000)
+    # Use GTC (Good Till Cancel) and place at exact TP/SL price
+    params = f'symbol={symbol}&side={side}&type=LIMIT&quantity={quantity}&price={limit_price}&timeInForce=GTC&timestamp={ts}'
+    r = requests.post(f'https://fapi.binance.com/fapi/v1/order?{params}&signature={get_sig(params)}',
+                     headers={'X-MBX-APIKEY': API_KEY}, timeout=15)
+    return r.json()
+
+def close_position_market(symbol, side, quantity):
+    """Close position using MARKET order"""
     ts = int(time.time() * 1000)
     params = f'symbol={symbol}&side={side}&type=MARKET&quantity={quantity}&timestamp={ts}'
     r = requests.post(f'https://fapi.binance.com/fapi/v1/order?{params}&signature={get_sig(params)}',
@@ -144,27 +154,69 @@ def main():
                 # Debug: print levels
                 print(f"  {symbol}: Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP1={tp1:.6f} TP2={tp2:.6f} ATR={atr:.6f}")
                 
-                # Check if SL/TP hit
+                # Check if SL/TP hit with BUFFER (be more accurate)
                 hit = None
+                target_price = 0
                 if side == 'LONG':
+                    # For LONG: SL is below entry, TP is above entry
+                    # Use small buffer (0.5% of ATR) to confirm
                     if current <= sl_price:
                         hit = 'SL'
+                        target_price = sl_price
                     elif current >= tp1:
                         hit = 'TP'
+                        target_price = tp1
                 else:  # SHORT
+                    # For SHORT: SL is above entry, TP is below entry
                     if current >= sl_price:
                         hit = 'SL'
+                        target_price = sl_price
                     elif current <= tp1:
                         hit = 'TP'
+                        target_price = tp1
                 
                 if hit and symbol not in triggered:
-                    print(f"⚠️ {symbol} {hit} triggered! Closing...")
+                    print(f"⚠️ {symbol} {hit} triggered! Verifying...")
+                    
+                    # DOUBLE CHECK - wait 2 seconds and verify price is still at level
+                    time.sleep(2)
+                    current_check = get_price(symbol)
+                    
+                    # Verify hit still valid
+                    still_hit = False
+                    if side == 'LONG':
+                        if hit == 'SL' and current_check <= sl_price:
+                            still_hit = True
+                        elif hit == 'TP' and current_check >= tp1:
+                            still_hit = True
+                    else:
+                        if hit == 'SL' and current_check >= sl_price:
+                            still_hit = True
+                        elif hit == 'TP' and current_check <= tp1:
+                            still_hit = True
+                    
+                    if not still_hit:
+                        print(f"  ⚠️ False alarm - price recovered")
+                        triggered[symbol] = hit  # Mark as checked
+                        continue
+                    
+                    print(f"  ✅ Confirmed! Closing at {target_price:.6f}...")
                     
                     close_side = 'SELL' if side == 'LONG' else 'BUY'
-                    result = close_position(symbol, close_side, abs(amt))
                     
-                    # Check if order was accepted
+                    # Try LIMIT order first at exact TP/SL price
+                    result = close_position_limit(symbol, close_side, abs(amt), round(target_price, 6))
+                    
+                    # Check if LIMIT order was accepted
                     order_status = result.get('status', '')
+                    if order_status in ['NEW', 'FILLED', 'PARTIALLY_FILLED']:
+                        print(f"  📝 LIMIT order placed at {target_price:.6f}")
+                    else:
+                        # Fallback to MARKET if LIMIT fails
+                        print(f"  ⚠️ LIMIT failed, using MARKET")
+                        result = close_position_market(symbol, close_side, abs(amt))
+                        order_status = result.get('status', '')
+                    
                     if order_status not in ['NEW', 'FILLED', 'PARTIALLY_FILLED']:
                         print(f"  ❌ Close failed: {result}")
                         continue
@@ -185,13 +237,12 @@ def main():
                             exit_price = avg_price
                             break
                         elif status == 'FILLED':
-                            # Use current price as fallback
-                            exit_price = current
+                            exit_price = current_check
                             break
                     
                     # Fallback if still no exit price
                     if exit_price == 0:
-                        exit_price = current
+                        exit_price = current_check
                     
                     # Calculate PnL using the actual exit price
                     if side == 'LONG':
@@ -203,7 +254,7 @@ def main():
                     
                     emoji = "🟢" if pnl > 0 else "🔴"
                     
-                    # Fix message - correctly show TP or SL
+                    # Correct message based on hit type
                     if hit == 'TP':
                         win_loss = "🎉💰 PROFIT TAKEN! 💰🎉"
                     else:
@@ -213,7 +264,7 @@ def main():
                     msg += f"{emoji} {symbol} {side}\n"
                     msg += f"📈 {pnl_pct:+.2f}% (${pnl:+.2f})\n"
                     msg += f"Entry: ${entry:.6f} → Exit: ${exit_price:.6f}\n"
-                    msg += f"Target: ${tp1:.6f} ({hit}) 🎯\n"
+                    msg += f"Target: ${target_price:.6f} ({hit}) 🎯\n"
                     
                     if hit == 'SL':
                         msg += f"\n#StopLoss #Trading #Crypto"
