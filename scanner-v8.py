@@ -664,7 +664,7 @@ def main():
                         
                         # Save SL/TP for price monitor
                         try:
-                            positions_file = '.positions_sl_tp.json'
+                            positions_file = os.path.join(script_dir, '.positions_sl_tp.json')
                             positions_data = {}
                             if os.path.exists(positions_file):
                                 with open(positions_file, 'r') as f:
