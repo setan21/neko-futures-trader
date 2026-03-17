@@ -98,6 +98,44 @@ def get_positions():
 def get_24h_tickers():
     return binance_get('https://fapi.binance.com/fapi/v1/ticker/24hr')
 
+def get_open_interest(symbol):
+    """Get current Open Interest for a symbol"""
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}'
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return float(data.get('openInterest', 0))
+    except:
+        return 0
+
+def get_oi_change(symbol, limit=5):
+    """Get OI change over recent candles - returns percentage change"""
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit={limit+1}'
+        r = requests.get(url, timeout=10)
+        candles = r.json()
+        
+        # Get OI for each hour
+        oi_values = []
+        for i in range(1, len(candles)):
+            # Use volume as proxy for OI (not exact but related)
+            vol = float(candles[i][5])  # volume
+            oi_values.append(vol)
+        
+        if len(oi_values) < 2:
+            return 0
+        
+        # Calculate change
+        current = oi_values[-1]
+        previous = sum(oi_values[:-1]) / len(oi_values[:-1])
+        
+        if previous == 0:
+            return 0
+        
+        return ((current - previous) / previous) * 100
+    except:
+        return 0
+
 def get_klines(symbol, interval='1h', limit=100):
     url = f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}'
     r = requests.get(url, timeout=15)
@@ -220,6 +258,10 @@ def analyze_symbol(symbol, stats):
     prev_high = max(highs[-20:-10]) if len(highs) >= 20 else max(highs[:-10])
     breakout = recent_high > prev_high * 1.02  # 2% above
     
+    # 4. Open Interest
+    oi = get_open_interest(symbol)
+    oi_change = get_oi_change(symbol)
+    
     # Runner score
     runner_score = 0
     if vol_ratio > 3: runner_score += 2
@@ -228,6 +270,9 @@ def analyze_symbol(symbol, stats):
     elif price_change > 5: runner_score += 1
     if abs(change_1h) > 3: runner_score += 1
     if breakout: runner_score += 2
+    # OI spike bonus
+    if oi_change > 20: runner_score += 2
+    elif oi_change > 10: runner_score += 1
     
     # Must have at least score 3 for signal
     if runner_score < 3:
@@ -282,6 +327,10 @@ def analyze_symbol(symbol, stats):
     except:
         rsi = 50
     
+    # Get Open Interest data
+    oi = get_open_interest(symbol)
+    oi_change = get_oi_change(symbol)
+    
     return {
         'symbol': symbol,
         'direction': direction,
@@ -302,7 +351,9 @@ def analyze_symbol(symbol, stats):
         'vol_spike': vol_ratio > 2,
         'vol_ratio': vol_ratio,
         'breakout': breakout,
-        'runner_score': runner_score
+        'runner_score': runner_score,
+        'oi': oi,
+        'oi_change': oi_change
     }
 
 def fetch_brave_news(query, count=2):
@@ -409,6 +460,12 @@ def format_signal(analysis, stats):
     # Get token context
     news = get_token_news(s['symbol'], stats)
     
+    # Format OI
+    oi = s.get('oi', 0)
+    oi_change = s.get('oi_change', 0)
+    oi_str = f"{oi:,.0f}" if oi else "N/A"
+    oi_emoji = "📈" if oi_change > 10 else "📉" if oi_change < -10 else "➡️"
+    
     msg = f"""{emoji} {s['direction']} SIGNAL {emoji}
 
 📈 {sym}USDT TECHNICAL ANALYSIS 📊
@@ -424,6 +481,10 @@ def format_signal(analysis, stats):
 • EMA 21: {s['ema_21']:.6f}
 • EMA 50: {s['ema_50']:.6f}
 • ATR: {s['atr']:.6f}
+
+📊 OPEN INTEREST:
+• OI: {oi_str}
+• OI Change: {oi_emoji} {oi_change:+.1f}%
 
 🔊 VOLUME: {'Volume Spike' if s['vol_spike'] else 'Normal'}
 
