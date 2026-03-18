@@ -691,6 +691,22 @@ def main():
     except:
         posted = set()
     
+    # Load recently closed positions (skip re-entry for 24h)
+    recently_closed = set()
+    try:
+        with open('.recently_closed', 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split(',')
+                    if len(parts) >= 2:
+                        symbol, timestamp = parts[0], int(parts[1])
+                        # Skip if closed in last 24 hours
+                        if time.time() - timestamp < 86400:  # 24 hours
+                            recently_closed.add(symbol)
+    except:
+        pass
+    
     # Only check safe coins
     movers_filtered = [(s, p) for s, p in movers if s in SAFE_COINS]
     
@@ -701,6 +717,11 @@ def main():
         
         # Skip if already has position
         if any(p.get('symbol') == symbol for p in positions):
+            continue
+        
+        # Skip if recently closed (avoid re-entry)
+        if symbol in recently_closed:
+            print(f"  Skipping {symbol} - recently closed")
             continue
         
         print(f"  Checking {symbol} ({change:.1f}%)...", end=" ")
