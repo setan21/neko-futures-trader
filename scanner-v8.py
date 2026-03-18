@@ -279,10 +279,11 @@ def analyze_symbol(symbol, stats):
     if not candles or len(candles) < 20:
         return None
     
-    closes = [float(c[3]) for c in candles]
-    highs = [float(c[1]) for c in candles]
-    lows = [float(c[2]) for c in candles]
-    volumes = [float(c[5]) for c in candles]
+    closes = [float(c[4]) for c in candles]  # index 4 = close
+    opens = [float(c[1]) for c in candles]     # index 1 = open
+    highs = [float(c[2]) for c in candles]    # index 2 = high
+    lows = [float(c[3]) for c in candles]     # index 3 = low
+    volumes = [float(c[5]) for c in candles] # index 5 = volume
     current = closes[-1]
     
     # === RUNNER CRITERIA ===
