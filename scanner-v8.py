@@ -291,6 +291,15 @@ def analyze_symbol(symbol, stats):
     recent_vol = volumes[-1]
     vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1
     
+    # Get weekly data
+    r_weekly = requests.get(f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1w&limit=5', timeout=10)
+    weekly_candles = r_weekly.json()
+    weekly_change = 0
+    if len(weekly_candles) >= 2:
+        weekly_open = float(weekly_candles[-1][1])
+        weekly_close = float(weekly_candles[-1][4])
+        weekly_change = ((weekly_close - weekly_open) / weekly_open) * 100
+    
     # 2. 1H Momentum (continuation)
     change_1h = ((closes[-1] - closes[-6]) / closes[-6]) * 100 if len(closes) >= 6 else 0
     
@@ -302,26 +311,78 @@ def analyze_symbol(symbol, stats):
     breakout = recent_high > prev_high * 1.02  # 2% above for LONG
     breakdown = recent_low < prev_low * 0.98  # 2% below for SHORT
     
-    # 4. Open Interest - use enhanced OI history
+    # 4. Pocket Pivot Detection (price > 50SMA, green candle, vol spike)
+    sma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else closes[-1]
+    is_green_candle = closes[-1] > opens[-1] if len(opens) > 0 else True
+    past_10_vol_max = max(volumes[-10:])
+    pocket_pivot = (current > sma_50) and is_green_candle and (recent_vol > past_10_vol_max)
+    
+    # 5. DCR% (Daily Closing Range %)
+    dcr = ((current - lows[-1]) / (highs[-1] - lows[-1])) * 100 if (highs[-1] - lows[-1]) > 0 else 0
+    
+    # 6. VCS - Volatility Contraction Score (based on ATR compression)
+    # Low ATR relative to recent = contraction
+    atr_current = calc_atr(candles, 14) or (current * 0.02)
+    atr_avg = sum(calc_atr(candles[i:i+5], 14) or (closes[i] * 0.02) for i in range(min(10, len(candles)-5))) / min(10, len(candles)-5) if len(candles) > 5 else atr_current
+    vcs_score = 100 - (atr_current / atr_avg * 100) if atr_avg > 0 else 50  # Higher = more contracted
+    vcs = vcs_score > 30  # Contraction detected
+    
+    # 7. Trend Base (price > 50SMA AND 10WMA > 30WMA)
+    wma_10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else closes[-1]
+    wma_30 = sum(closes[-30:]) / 30 if len(closes) >= 30 else closes[-1]
+    trend_base = (current > sma_50) and (wma_10 > wma_30)
+    
+    # 8. PP Count - count pocket pivots in last 30 days
+    pp_count = 0
+    for i in range(20, len(closes)-1):
+        if i >= 50:  # Need 50 EMA
+            vol_high = max(volumes[i-10:i])
+            if volumes[i] > vol_high and closes[i] > sum(closes[i-50:i-40])/10:
+                pp_count += 1
+    
+    # 9. 21EMA position in ATR range
+    ema_21_val = calc_ema(closes, 21) or current
+    ema_position = ((current - (ema_21_val - atr_current)) / (atr_current * 2)) * 100 if atr_current > 0 else 50
+    
+    # Open Interest - use enhanced OI history
     oi_data = get_oi_history(symbol)
     oi = oi_data.get('current', 0)
     oi_change = oi_data.get('change_pct', 0)
     oi_trend = oi_data.get('trend', 'neutral')
     
-    # Runner score
+    # Runner score - updated with new setups
     runner_score = 0
+    
+    # Volume
     if vol_ratio > 3: runner_score += 2
     elif vol_ratio > 2: runner_score += 1
+    
+    # Price changes
     if price_change > 10: runner_score += 2
     elif price_change > 5: runner_score += 1
     if abs(change_1h) > 3: runner_score += 1
+    
+    # Breakout/Breakdown
     if breakout: runner_score += 2
     if breakdown: runner_score += 2
-    # OI spike bonus
+    
+    # OI
     if oi_change > 20: runner_score += 2
     elif oi_change > 10: runner_score += 1
-    if oi_trend == 'up' and price_change > 0: runner_score += 1  # OI + price up = bullish
-    if oi_trend == 'down' and price_change < 0: runner_score += 1  # OI + price down = bearish
+    if oi_trend == 'up' and price_change > 0: runner_score += 1
+    if oi_trend == 'down' and price_change < 0: runner_score += 1
+    
+    # New setups scoring
+    if weekly_change > 20: runner_score += 3  # Weekly 20%+
+    elif weekly_change > 10: runner_score += 2
+    elif weekly_change > 5: runner_score += 1
+    
+    if pocket_pivot: runner_score += 2
+    if trend_base: runner_score += 1
+    if dcr > 20: runner_score += 1  # DCR% >20
+    if vcs: runner_score += 1  # Volatility contraction
+    if pp_count > 1: runner_score += 2  # Multiple pocket pivots
+    if 0 <= ema_position <= 100 and ema_position < 50: runner_score += 1  # Price near 21EMA
     
     # Must have at least score 3 for signal
     if runner_score < 3:
@@ -414,7 +475,16 @@ def analyze_symbol(symbol, stats):
         'runner_score': runner_score,
         'oi': oi,
         'oi_change': oi_change,
-        'oi_trend': oi_trend
+        'oi_trend': oi_trend,
+        # New setups
+        'weekly_change': weekly_change,
+        'pocket_pivot': pocket_pivot,
+        'dcr': dcr,
+        'vcs': vcs,
+        'vcs_score': vcs_score,
+        'trend_base': trend_base,
+        'pp_count': pp_count,
+        'ema_position': ema_position
     }
 
 def fetch_brave_news(query, count=2):
@@ -551,6 +621,14 @@ def format_signal(analysis, stats):
 • OI Trend: {trend_emoji} {oi_trend.upper()}
 
 🔊 VOLUME: {'Volume Spike' if s['vol_spike'] else 'Normal'}
+
+📊 NEW SETUPS:
+• Weekly: {s.get('weekly_change', 0):+.1f}%
+• Pocket Pivot: {'✅ Yes' if s.get('pocket_pivot') else '❌ No'}
+• DCR%: {s.get('dcr', 0):.1f}
+• VCS Score: {s.get('vcs_score', 0):.1f}
+• Trend Base: {'✅ Yes' if s.get('trend_base') else '❌ No'}
+• PP Count: {s.get('pp_count', 0)}
 
 📊 STRUCTURE:
 • Support: {s['support']:.6f}
