@@ -393,6 +393,14 @@ def analyze_symbol(symbol, stats):
     if abs(price_change) < 3:
         return None
     
+    # Skip coins that are already too high (chasing high = bad)
+    # For LONG: skip if already up >15% (too late)
+    # For SHORT: skip if already down <-15% (too late)
+    if direction == "LONG" and price_change > 15:
+        return None
+    if direction == "SHORT" and price_change < -15:
+        return None
+    
     # EMAs
     ema_21 = calc_ema(closes, 21)
     ema_50 = calc_ema(closes, 50)
