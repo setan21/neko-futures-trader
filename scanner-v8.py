@@ -795,9 +795,9 @@ def main():
                                 with open(positions_file, 'r') as f:
                                     positions_data = json.load(f)
                             positions_data[symbol] = {
-                                'entry': entry_price,
-                                'sl': sl_price,
-                                'tp1': tp_price,
+                                'entry': analysis['current'],
+                                'sl': analysis['sl'],
+                                'tp1': analysis['tp1'],
                                 'side': side,
                                 'opened_at': datetime.now().isoformat()
                             }
