@@ -275,6 +275,13 @@ def main():
                     
                     send_telegram(msg)
                     
+                    # Save to recently_closed (to avoid re-entry for 24h)
+                    try:
+                        with open('.recently_closed', 'a') as f:
+                            f.write(f"{symbol},{int(time.time())}\n")
+                    except:
+                        pass
+                    
                     # Remove from saved
                     if symbol in saved_data:
                         del saved_data[symbol]
