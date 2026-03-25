@@ -1,225 +1,211 @@
 ---
 name: neko-futures-trader
 description: |
-  Automated Binance Futures trading scanner with runner detection and price monitor.
+  Professional Binance Futures automated trading system with AI-powered signal detection.
   
-  Features:
-  - Runner detection (volume spike + momentum + breakout + OI spike)
-  - Open Interest (OI) integration for better signals
-  - Real crypto news via Brave Search
-  - Fibonacci+ATR based SL/TP
-  - Price monitor (auto-close when SL/TP hit)
-  - Emoji-heavy Telegram alerts
-  - Score-based signal ranking (0-10)
-  - Auto-execute trades
+  🎯 CORE FEATURES:
+  - Auto Entry: Scanner finds signals every 5 minutes
+  - Auto SL/TP: Price monitor checks every 1 second
+  - Auto Cache Cleanup: Removes expired entries on startup
+  - Auto Breakeven: Moves SL to entry at +5%
+  - Auto Trailing TP: Activates at +10%
+  - Auto Delisting: Blocks delisted tokens
+  - Auto Recovery: Self-heals from errors
   
-  Use when: user wants automated futures trading signals.
+  📊 STRATEGY:
+  - Multi-TP: 40% @ +10%, 30% @ +15%, 30% @ +20%
+  - Dynamic ATR: SL/TP adjusts to volatility
+  - 14 Indicators: RSI, MACD, Bollinger, VWAP, EMA, etc.
+  - 64 SAFE_COINS pre-filtered
+  
+  ⚙️ SETTINGS (in config.py):
+  - MAX_POSITIONS = 7
+  - ENTRY_PERCENT = 6%
+  - MIN_PROFIT_BREAKEVEN = 5.0%
+  - MIN_PROFIT_TRAILING_TP = 10.0%
+  - CHECK_INTERVAL = 1 second
+  
+  📁 FILES:
+  - scanner-v8.py (main scanner)
+  - price-monitor.py (TP/SL executor)
+  - config.py (all settings)
+  - advanced_analysis.py (indicators)
+  - error_handling.py (self-healing)
+  - delisting_monitor.py (safety)
+  - position_command.py (/position command)
+  
+  🔑 REQUIRED ENV:
+  - BINANCE_API_KEY
+  - BINANCE_SECRET
+  - TELEGRAM_BOT_TOKEN
+  - TELEGRAM_CHANNEL
+  
+  💰 BALANCE: ~$392 (as of 2026-03-19)
+  
+  Use when: user wants automated futures trading or asks about positions.
+  
 metadata:
   openclaw:
     emoji: 🐱📈
     requires:
       bins: ["python3"]
-      env: 
+      env:
         - BINANCE_API_KEY
         - BINANCE_SECRET
         - TELEGRAM_BOT_TOKEN
         - TELEGRAM_CHANNEL
-        - BRAVE_API_KEY
     startup:
-      command: "cd /root/.openclaw/workspace/neko-futures-trader && nohup bash -c 'while true; do source .env && python3 scanner-v8.py; echo \"---\"; sleep 300; done' > ../scanner.log 2>&1 &"
+      command: "cd /root/.openclaw/workspace/neko-futures-trader && nohup bash -c 'while true; do source .env && python3 scanner-v8.py; sleep 300; done' > scanner.log 2>&1 &"
       type: "background"
 ---
 
 # Neko Futures Trader 🐱📈
 
-Complete Binance Futures automated trading system.
-
-## Quick Setup
+## Quick Install (For New Agent)
 
 ```bash
-# 1. Clone
-git clone https://github.com/lukmanc405/neko-futures-trader.git
+# 1. Navigate to workspace
+cd /root/.openclaw/workspace/neko-futures-trader
 
-# 2. Install
-pip install requests hmac hashlib
+# 2. Check files exist
+ls -la *.py *.md
 
-# 3. Configure
-cp .env.example .env
-nano .env
+# 3. Verify .env exists
+cat .env | head -3
 
-# 4. Run
+# 4. Start scanner
 nohup python3 scanner-v8.py &
+
+# 5. Start price monitor
 nohup python3 price-monitor.py &
+
+# 6. Check status
+python3 position_command.py
 ```
 
-## Environment Variables
+## Auto Features (All Running)
 
-Create `.env` file:
+| Feature | Status | Description |
+|---------|--------|-------------|
+| 🔍 Auto Entry | ✅ ON | Scanner runs every 5 min |
+| ⏱️ Auto TP/SL | ✅ ON | Price monitor every 1 sec |
+| 🧹 Auto Cache | ✅ ON | Cleans 24h old entries on startup |
+| 🛡 Auto Breakeven | ✅ ON | SL → Entry at +5% |
+| 🎯 Auto Trailing | ✅ ON | TP trails at +10% |
+| 🚫 Auto Delisting | ✅ ON | Blocks bad tokens |
+| 🔄 Auto Recovery | ✅ ON | Self-heals from errors |
+| 📱 Auto Notify | ✅ ON | Telegram alerts |
 
-```bash
-BINANCE_API_KEY=your_binance_api_key
-BINANCE_SECRET=your_binance_secret
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHANNEL=your_channel_id
-BRAVE_API_KEY=your_brave_api_key
+## Configuration (config.py)
+
+```python
+# === TRADING ===
+MAX_POSITIONS = 7
+AUTO_FILL_EMPTY_SLOTS = True
+ENTRY_PERCENT = 6%
+LEVERAGE = 10
+
+# === RISK ===
+MIN_PROFIT_BREAKEVEN = 5.0      # SL → Entry at +5%
+MIN_PROFIT_TRAILING_TP = 10.0   # Trail at +10%
+
+# === MULTI-TP (1:2 R/R) ===
+TP1_PERCENT = 10.0   # Close 40% @ +10%
+TP2_PERCENT = 15.0   # Close 30% @ +15%
+TP3_PERCENT = 20.0   # Close 30% @ +20%
+
+# === DYNAMIC ATR ===
+ATR_MULTIPLIER_SL_HIGH = 2.0    # High vol: SL 2×ATR
+ATR_MULTIPLIER_TP_HIGH = 4.0    # High vol: TP 4×ATR
+ATR_MULTIPLIER_SL_NORMAL = 1.5  # Normal: SL 1.5×ATR
+ATR_MULTIPLIER_TP_NORMAL = 3.0  # Normal: TP 3×ATR
+ATR_MULTIPLIER_SL_LOW = 1.0     # Low vol: SL 1×ATR
+ATR_MULTIPLIER_TP_LOW = 2.5     # Low vol: TP 2.5×ATR
+
+# === MONITOR ===
+CHECK_INTERVAL = 1  # seconds
 ```
 
-## Scripts
+## Signal Indicators (v1.0.36)
 
-### scanner-v8.py
+| # | Indicator | Condition | Score |
+|---|-----------|-----------|-------|
+| 1 | Volume Spike | >3x avg | +2 |
+| 2 | Price Change | >10% | +2 |
+| 3 | 1H Change | >3% | +1 |
+| 4 | Breakout | HH/HL broken | +2 |
+| 5 | Breakdown | LH/LL broken | +2 |
+| 6 | OI Increase | >20% | +2 |
+| 7 | Weekly Change | >20% | +3 |
+| 8 | Pocket Pivot | Yes | +2 |
+| 9 | RSI | <30 or >70 | +1 |
+| 10 | MACD Cross | Histogram | +1 |
+| 11 | Bollinger | Band touch | +1 |
+| 12 | VWAP Cross | Price cross | +1 |
+| 13 | Volume 5x | Extra spike | +2 |
+| 14 | DCR | >20% | +1 |
 
-Finds trading signals:
-- Scans 500+ USDT pairs
-- Runner detection (volume + momentum + breakout)
-- Real news via Brave Search
-- Posts to Telegram
-- Auto-executes trades
+**Minimum Score: 3 to trigger signal**
 
+## File Structure
+
+```
+neko-futures-trader/
+├── scanner-v8.py          # Main scanner (auto entry)
+├── price-monitor.py       # TP/SP executor (auto close)
+├── config.py             # All settings
+├── advanced_analysis.py   # RSI, MACD, etc.
+├── error_handling.py     # Circuit breaker, rate limiter
+├── delisting_monitor.py   # Auto block delisted
+├── position_command.py    # /position command
+├── .env                  # API keys (SECRET)
+├── .positions_sl_tp.json # Position cache
+├── .recently_closed      # Closed cache (24h)
+├── .posted_signals       # Posted cache
+├── README.md             # Documentation
+└── SKILL.md              # This file
+```
+
+## Commands
+
+### Start Scanner
 ```bash
+cd /root/.openclaw/workspace/neko-futures-trader
 nohup python3 scanner-v8.py > scanner.log 2>&1 &
 ```
 
-### price-monitor.py
-
-Monitors positions:
-- Checks every 60 seconds
-- Auto-closes when SL/TP hit
-- Fibonacci+ATR based levels
-- Emoji alerts to Telegram
-
+### Start Price Monitor
 ```bash
-nohup python3 price-monitor.py > price-monitor.log 2>&1 &
+cd /root/.openclaw/workspace/neko-futures-trader
+nohup python3 price-monitor.py > pm.log 2>&1 &
 ```
 
-## Fibonacci+ATR SL/TP
-
-| Level | Formula |
-|-------|---------|
-| SL | Entry - 1.5×ATR |
-| TP1 | Entry + 3×ATR (Fib 1.272) |
-| TP2 | Entry + 4.5×ATR (Fib 1.618) |
-
-## Alert Templates
-
-### Signal Alert
-
-```
-🟢 LONG SIGNAL 🟢
-
-📈 BTCUSDT TECHNICAL ANALYSIS 📊
-📊 Chart: https://www.tradingview.com/chart/?symbol=BINANCE:BTCUSDT
-
-📐 MULTI-TF CONFIRMATION:
-• Trend 1H: BULLISH
-• Structure: BREAKOUT
-📊 24h Change: +5.2%
-
-📐 INDICATORS:
-• RSI (14): 65.3
-• EMA 21: 71234.56
-• EMA 50: 70890.12
-• ATR: 1234.56
-
-🔊 VOLUME: Volume Spike (2.5x)
-
-📊 STRUCTURE:
-• Support: 70000.00
-• Resistance: 72000.00
-
-🎯 RUNNER METRICS:
-• 1H Momentum: +3.2%
-• Volume Spike: 2.5x
-• Breakout: ✅ Yes
-• Score: 7/10 🚀
-
-💡 INSIGHT: LONG | BREAKOUT | RSI: 65.3
-🎯 Entry: $71000.00
-📈 TP: $74500.00
-🛡 SL: $68000.00
-⏰ Timeframe: 1H
-
-📰 Bitcoin surges past $71K as...
-
-✅ ORDER EXECUTED: LONG
-📋 Order ID: 123456789 | Status: NEW
+### Check Positions
+```bash
+python3 position_command.py
 ```
 
-### Profit Alert
-
-```
-🎉💰 PROFIT TAKEN! 💰🎉
-
-🟢 TIAUSDT LONG
-📈 +5.02% ($5.02)
-Entry: $0.364600 → Exit: $0.382940
-Target: $0.390323 (TP1) 🎯
-
-#TakeProfit #Winning #Crypto
+### Check Running
+```bash
+pgrep -f scanner-v8 && echo "Scanner OK"
+pgrep -f price-monitor && echo "Monitor OK"
 ```
 
-### Stop Loss Alert
+## Current Status (2026-03-19)
 
-```
-❌ STOP HIT
+- 💰 Balance: ~$392
+- 📊 Positions: 2/7 (KAVA, ARB)
+- 🔍 Scanner: Running
+- ⏱️ Monitor: Running
+- 📱 Telegram: Connected
 
-🔴 AXSUSDT LONG
-📈 -3.12% (-$3.50)
-Entry: $1.237000 → Exit: $1.199000
-Target: $1.199890 (SL) 🎯
+## Safety Features
 
-#StopLoss #Trading #Crypto
-```
-
-## Configuration
-
-### scanner-v8.py
-
-```python
-LEVERAGE = 10           # 10x leverage
-MAX_POSITIONS = 8       # Max open positions
-ENTRY_PERCENT = 5       # % of margin per trade
-MIN_GAIN = 0.5          # Min 24h change %
-```
-
-### price-monitor.py
-
-```python
-CHECK_INTERVAL = 60      # Seconds between checks
-```
-
-## Runner Detection
-
-| Criteria | Weight |
-|----------|--------|
-| Volume Spike 3x+ | +2 |
-| Volume Spike 2x+ | +1 |
-| 24h Change 10%+ | +2 |
-| 24h Change 5%+ | +1 |
-| 1H Momentum 3%+ | +1 |
-| Breakout | +2 |
-| **OI Spike 20%+** | +2 |
-| **OI Spike 10%+** | +1 |
-
-Minimum: 3/10 to trigger
-
-## Open Interest (OI)
-
-Scanner fetches OI from Binance API:
-- Detects OI spikes for breakout signals
-- Shows OI and OI change in alerts
-- Bonus scoring for OI activity
-
-## Files
-
-- `scanner-v8.py` - Main scanner
-- `price-monitor.py` - Auto-close monitor
-- `.env.example` - Template
-- `README.md` - Full docs
-- `SKILL.md` - This file
-
-## Safety
-
-⚠️ Trading futures involves substantial risk. Only trade with capital you can afford to lose. Monitor positions regularly.
+1. **Cache Auto-Cleanup**: Removes entries >24h old
+2. **Recently Closed**: Skips re-entry for 24h
+3. **Delisting Monitor**: Auto-blocks bad tokens
+4. **Error Handling**: Circuit breaker, rate limiter
+5. **Recovery**: Auto-restart on failure
 
 ---
-*Skill by Neko Sentinel* 🐱🛡️
+*Built by Neko Sentinel* 🐱🛡️
