@@ -3,7 +3,7 @@
 
 # ── TRADING ──────────────────────────────────────────────────────────────────
 LEVERAGE = 10                    # Futures leverage (10x)
-MAX_POSITIONS = 7               # Max concurrent positions
+MAX_POSITIONS = 5  # Reduced from 7 for better risk management               # Max concurrent positions
 AUTO_FILL_EMPTY_SLOTS = True     # Auto-find entries when positions < MAX
 ENTRY_PERCENT = 6                # % of balance per trade
 
