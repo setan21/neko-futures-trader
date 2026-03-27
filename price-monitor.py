@@ -108,10 +108,10 @@ def update_sl_to_breakeven(symbol, side, new_sl):
     
     ts = int(time.time() * 1000)
     close_side = 'SELL' if side == 'LONG' else 'BUY'
-    params = f'symbol={symbol}&side={close_side}&orderType=STOP&stopPrice={new_sl}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
+    params = f'symbol={symbol}&side={close_side}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={new_sl}&stopPrice={new_sl}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
     sig = get_sig(params)
     try:
-        r = requests.post(f'https://fapi.binance.com/fapi/v1/orderAlg?{params}&signature={sig}', 
+        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}', 
                         headers=headers, timeout=15)
         return r.json()
     except:
@@ -122,10 +122,10 @@ def update_tp_trailing(symbol, side, new_tp):
     ts = int(time.time() * 1000)
     headers = {'X-MBX-APIKEY': API_KEY}
     close_side = 'SELL' if side == 'LONG' else 'BUY'
-    params = f'symbol={symbol}&side={close_side}&orderType=STOP&stopPrice={new_tp}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
+    params = f'symbol={symbol}&side={close_side}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={new_tp}&stopPrice={new_tp}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
     sig = get_sig(params)
     try:
-        r = requests.post(f'https://fapi.binance.com/fapi/v1/orderAlg?{params}&signature={sig}', 
+        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}', 
                         headers=headers, timeout=15)
         return r.json()
     except:
@@ -376,6 +376,12 @@ def main():
                     sl_price = float(pos_data['sl'])
                     tp_price = float(pos_data['tp1'])
                     print(f"  {symbol}: [SAVED] Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP={tp_price:.6f}")
+                    # Skip ATR calculation since we have saved data
+                    continue
+                else:
+                    # No saved SL/TP - skip TP/SL monitoring for this position
+                    print(f"  {symbol}: [NO DATA] Entry={entry:.6f} Current={current:.6f} - Skipping (no SL/TP data)")
+                    continue
                 
                 # Check for Multi-TP levels (partial closes)
                 original_amt = abs(amt)  # Store original amount for Multi-TP calculation
