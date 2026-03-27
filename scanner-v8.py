@@ -606,7 +606,10 @@ def analyze_symbol(symbol, stats):
         return 100 - (100 / (1 + rs))
     
     rsi_14 = calc_rsi(closes, 14)
-    rsi_signal = (rsi_14 < 30 or rsi_14 > 70)  # Oversold or Overbought
+    # RSI-based filter: reject bad entries
+    rsi_oversold = rsi_14 < 30
+    rsi_overbought = rsi_14 > 70
+    rsi_signal = rsi_oversold or rsi_overbought
     
     # 11. MACD Histogram Cross
     ema_12 = calc_ema(closes[-26:], 12) if len(closes) >= 26 else calc_ema(closes, 12)
@@ -671,9 +674,9 @@ def analyze_symbol(symbol, stats):
     elif oi_change > 10: runner_score += 1
     
     # New setups scoring
-    if weekly_change > 20: runner_score += 3  # Weekly 20%+
-    elif weekly_change > 10: runner_score += 2
-    elif weekly_change > 5: runner_score += 1
+    if weekly_change > 20: runner_score += 2  # Weekly 20%+ (max +2)
+    elif weekly_change > 10: runner_score += 1
+    elif weekly_change > 3: runner_score += 1
     
     if pocket_pivot: runner_score += 2
     if trend_base: runner_score += 1
@@ -691,6 +694,15 @@ def analyze_symbol(symbol, stats):
     if abs(price_change) < 3:
         return None
     
+    # EMA Filter - for LONG, price should be near or below 21EMA (not extended)
+    # ema_position > 80 means price is extended above ATR bands
+    if direction == "LONG" and ema_position > 85:
+        # Price too extended above ATR bands, likely a chase
+        return None
+    if direction == "SHORT" and ema_position < 15:
+        # Price too extended below ATR bands for shorts
+        return None
+    
     # EMAs
     ema_21 = calc_ema(closes, 21)
     ema_50 = calc_ema(closes, 50)
@@ -706,6 +718,14 @@ def analyze_symbol(symbol, stats):
         direction = "LONG"
     else:
         direction = "SHORT"
+    
+    # RSI Filter - reject signals at extremes
+    if direction == "LONG" and rsi_overbought:
+        # Don't LONG when RSI overbought (>70) - too risky
+        return None
+    if direction == "SHORT" and rsi_oversold:
+        # Don't SHORT when RSI oversold (<30) - too risky  
+        return None
     
     # Use ATR-based if ATR% is in safe range, otherwise fallback to PRICE
     if atr_pct >= PRICE_FALLBACK_MIN_ATR and atr_pct <= PRICE_FALLBACK_MAX_ATR:
