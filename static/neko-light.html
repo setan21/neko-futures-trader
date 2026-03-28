@@ -3,323 +3,607 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Neko Trading</title>
+<meta name="description" content="Neko Trading - Automated Futures Trading Dashboard">
+<meta name="theme-color" content="#07080d">
+<title>Neko Trading | Dashboard</title>
 <style>
-:root{
-  --bg:#07080d;
-  --surface:#0d0f1a;
-  --surface2:#12142a;
-  --border:#1c1e38;
-  --red:#ff3b5c;
-  --blue:#3b8bff;
-  --yellow:#ffd23b;
-  --green:#2bffb8;
-  --text:#d0d4f0;
-  --muted:#4a4f7a;
-  --accent:var(--yellow);
-}
-*{margin:0;padding:0;box-sizing:border-box}
-body{
-  font:12px/1.6 system-ui,sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  min-height:100vh;
-  padding:20px 16px 60px;
-  font-smooth:antialiased;
-}
-
-/* ── HEADER ── */
-.hdr{
-  display:flex;justify-content:space-between;align-items:center;
-  margin-bottom:28px;
-}
-.logo{
-  display:flex;align-items:center;gap:10px;
-}
-.logo-icon{
-  width:36px;height:36px;
-  background:linear-gradient(135deg,#ffd23b,#ff3b5c);
-  border-radius:10px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:18px;
-  box-shadow:0 4px 16px rgba(255,59,92,.25);
-}
-.logo-text{font-size:16px;font-weight:900;letter-spacing:-0.5px}
-.logo-text span{color:var(--muted)}
-
-/* Toggle btn */
-.btn-eye{
-  width:40px;height:40px;
-  background:var(--surface2);border:1px solid var(--border);
-  border-radius:10px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;
-  font-size:16px;
-  transition:all .2s;
-}
-.btn-eye:hover{border-color:var(--accent)}
-.btn-eye.active{background:rgba(255,210,59,.1);border-color:var(--yellow)}
-
-/* ── BALANCE ── */
-.balance-section{margin-bottom:20px}
-.bal-label{
-  font-size:9px;text-transform:uppercase;letter-spacing:2.5px;
-  color:var(--muted);margin-bottom:6px;font-weight:700;
-}
-.bal-value{
-  font-size:48px;font-weight:900;letter-spacing:-2px;
-  color:var(--text);line-height:1;
-}
-.bal-value.blur{filter:blur(12px);user-select:none;transition:filter .3s}
-.bal-pnl{
-  font-size:13px;font-weight:700;margin-top:6px;
-  color:var(--green);
+:root {
+  --bg: #07080d;
+  --surface: #0d0f1a;
+  --surface2: #12142a;
+  --border: #1c1e38;
+  --border-light: #252844;
+  --red: #ff3b5c;
+  --red-bg: rgba(255,59,92,0.1);
+  --blue: #3b8bff;
+  --blue-bg: rgba(59,139,255,0.1);
+  --yellow: #ffd23b;
+  --yellow-bg: rgba(255,210,59,0.1);
+  --green: #2bffb8;
+  --green-bg: rgba(43,255,184,0.1);
+  --text: #d0d4f0;
+  --muted: #6b7199;
+  --dim: #4a4f7a;
+  --radius: 8px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.3);
+  --transition: all 0.25s ease;
 }
 
-/* ── STATS ROW ── */
-.stats-row{
-  display:grid;
-  grid-template-columns:repeat(4,1fr);
-  gap:8px;
-  margin-bottom:20px;
-}
-.stat-card{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:12px;
-  text-align:center;
-}
-.stat-card .label{
-  font-size:8px;text-transform:uppercase;letter-spacing:1.5px;
-  color:var(--muted);margin-bottom:6px;font-weight:700;
-}
-.stat-card .value{
-  font-size:18px;font-weight:900;
-}
-.stat-card .value.green{color:var(--green)}
-.stat-card .value.red{color:var(--red)}
-.stat-card .value.yellow{color:var(--yellow)}
-
-/* ── TOP 3 ── */
-.section-label{
-  font-size:9px;text-transform:uppercase;letter-spacing:2.5px;
-  color:var(--muted);font-weight:700;margin-bottom:10px;
-}
-.top3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:24px}
-
-/* Top3 card */
-.t3{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;padding:14px 16px;
-  transition:transform .2s,border-color .2s;
-  cursor:default;
-}
-.t3:hover{transform:translateY(-3px)}
-.t3 .rank{
-  font-size:20px;font-weight:900;margin-bottom:8px;
-}
-.t3 .rank.gold{color:var(--yellow)}
-.t3 .rank.silver{color:#aab0cc}
-.t3 .rank.bronze{color:#cd7b4a}
-.t3 .sym{font-size:14px;font-weight:800;margin-bottom:4px}
-.t3 .dir{
-  font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
-  margin-bottom:10px;
-}
-.t3 .dir.long{color:var(--blue)}
-.t3 .dir.short{color:var(--red)}
-.t3 .roi{font-size:22px;font-weight:900;line-height:1}
-.t3 .roi.long{color:var(--blue)}
-.t3 .roi.short{color:var(--red)}
-
-/* Number badge for rank */
-.t3 .num{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:20px;height:20px;border-radius:6px;
-  font-size:10px;font-weight:900;
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; scroll-behavior: smooth; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ── TABLE ── */
-.tbl{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;overflow:hidden;margin-bottom:20px;
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 12px 12px 60px;
 }
-.th{
-  display:grid;
-  grid-template-columns:52px 46px 1fr 64px 64px 58px 58px 56px;
-  padding:0 14px;
-  border-bottom:1px solid var(--border);
+
+/* ── Header ── */
+.hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
 }
-.th span{
-  font-size:8px;color:var(--muted);text-transform:uppercase;
-  letter-spacing:1.5px;padding:10px 0;display:block;text-align:right;
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.th span:first-child{text-align:left}
 
-.tr{
-  display:grid;
-  grid-template-columns:52px 46px 1fr 64px 64px 58px 58px 56px;
-  padding:0 14px;
-  border-bottom:1px solid #0e0f1e;
-  transition:background .15s;
-  cursor:default;
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--yellow), var(--red));
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: var(--transition);
 }
-.tr:last-child{border-bottom:none}
-.tr:hover{background:#13142a}
 
-.td{
-  font-size:11px;padding:11px 0;text-align:right;
-  overflow:hidden;white-space:nowrap;display:flex;align-items:center;justify-content:flex-end;
+.logo:hover .logo-icon {
+  transform: scale(1.05);
+  box-shadow: 0 0 20px rgba(255,210,59,0.3);
 }
-.td.sym{text-align:left;font-size:13px;font-weight:800;justify-content:flex-start}
 
-/* Badge */
-.badge{
-  display:inline-flex;align-items:center;
-  font-size:8px;font-weight:800;letter-spacing:.5px;
-  padding:2px 7px;border-radius:5px;
+.logo-text {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: -0.3px;
 }
-.badge.long{background:rgba(59,139,255,.15);color:var(--blue)}
-.badge.short{background:rgba(255,59,92,.15);color:var(--red)}
 
-.price{font-size:10px;color:var(--muted)}
-.price.lg{color:var(--text);font-weight:600}
-.roi{font-size:12px;font-weight:800}
-.roi.g{color:var(--green)}
-.roi.r{color:var(--red)}
+.logo-text span { color: var(--dim); }
 
-/* SL/TP column colors */
-.sl{color:var(--red);font-size:10px}
-.tp{color:var(--green);font-size:10px}
-
-/* Long/short row accent */
-.tr.long-row{border-left:2px solid var(--blue)}
-.tr.short-row{border-left:2px solid var(--red)}
-.tr.long-row{border-left-color:var(--blue)}
-.tr.short-row{border-left-color:var(--red)}
-
-/* ── REFRESH BTN ── */
-.btn-refresh{
-  width:100%;padding:13px;
-  background:var(--surface2);border:1px solid var(--border);
-  border-radius:12px;cursor:pointer;
-  font-size:12px;font-weight:700;color:var(--muted);
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  transition:all .2s;letter-spacing:.5px;
+.toggle-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  transition: var(--transition);
 }
-.btn-refresh:hover{border-color:var(--accent);color:var(--accent)}
-.btn-refresh:active{transform:scale(.98)}
 
-/* ── STATUS BAR ── */
-.status{
-  position:fixed;bottom:0;left:0;right:0;
-  background:var(--surface);
-  border-top:1px solid var(--border);
-  padding:10px 16px;
-  display:flex;justify-content:space-between;align-items:center;
-  font-size:9px;color:var(--muted);
+.toggle-btn:hover {
+  border-color: var(--yellow);
+  color: var(--yellow);
+  background: var(--surface);
 }
-.status span{color:var(--green)}
-.status-algo{color:var(--muted)}
-.status-algo.active{color:var(--green)}
 
-/* ── ANIMATIONS ── */
-@keyframes fadeUp{
-  from{opacity:0;transform:translateY(8px)}
-  to{opacity:1;transform:translateY(0)}
+.toggle-btn.active {
+  background: var(--yellow-bg);
+  border-color: var(--yellow);
+  color: var(--yellow);
 }
-.t3,.tr{animation:fadeUp .35s ease-out both}
-.t3:nth-child(1){animation-delay:.0s}
-.t3:nth-child(2){animation-delay:.08s}
-.t3:nth-child(3){animation-delay:.16s}
 
-@keyframes spin{to{transform:rotate(360deg)}}
-.spinning{animation:spin .8s linear infinite}
+/* ── Balance Card ── */
+.balance-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  transition: var(--transition);
+  animation: fadeIn 0.5s ease-out;
+}
 
-/* ── RESPONSIVE ── */
-@media(max-width:500px){
-  .top3{grid-template-columns:repeat(3,1fr);gap:6px}
-  .bal-value{font-size:36px}
-  .th,.tr{
-    grid-template-columns:44px 42px 1fr 54px 54px 48px 48px 48px;
-    padding:0 10px;
+.balance-card:hover {
+  border-color: var(--border-light);
+  box-shadow: var(--shadow);
+}
+
+.balance-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.balance-value {
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  transition: filter 0.3s ease, var(--transition);
+}
+
+.balance-value.blur { filter: blur(10px); }
+
+.balance-pnl {
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 6px;
+  color: var(--green);
+  transition: var(--transition);
+}
+
+.balance-pnl.negative { color: var(--red); }
+
+/* ── Stats Grid ── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stat-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 8px;
+  text-align: center;
+  transition: var(--transition);
+  animation: fadeUp 0.4s ease-out both;
+}
+
+.stat-box:hover {
+  border-color: var(--border-light);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.stat-box:nth-child(1) { animation-delay: 0.1s; }
+.stat-box:nth-child(2) { animation-delay: 0.15s; }
+.stat-box:nth-child(3) { animation-delay: 0.2s; }
+.stat-box:nth-child(4) { animation-delay: 0.25s; }
+
+.stat-label {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.2;
+  transition: var(--transition);
+}
+
+.stat-value.g { color: var(--green); }
+.stat-value.r { color: var(--red); }
+.stat-value.y { color: var(--yellow); }
+
+/* ── Section ── */
+.section { margin-bottom: 12px; }
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.refresh-btn {
+  width: 28px;
+  height: 28px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--muted);
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.refresh-btn:hover {
+  border-color: var(--yellow);
+  color: var(--yellow);
+  background: var(--surface);
+  transform: scale(1.1);
+}
+
+.refresh-btn:active {
+  transform: scale(0.95);
+}
+
+@keyframes spin { 
+  to { transform: rotate(360deg); } 
+}
+
+.spinning {
+  animation: spin 0.7s linear infinite;
+}
+
+/* ── Top Performers ── */
+.performers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.performer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 10px;
+  transition: var(--transition);
+  animation: fadeUp 0.4s ease-out both;
+}
+
+.performer:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+  border-color: var(--border-light);
+}
+
+.performer:nth-child(1) { animation-delay: 0s; }
+.performer:nth-child(2) { animation-delay: 0.08s; }
+.performer:nth-child(3) { animation-delay: 0.16s; }
+
+.performer-rank {
+  font-size: 18px;
+  font-weight: 900;
+  margin-bottom: 4px;
+  transition: var(--transition);
+}
+
+.performer-rank.gold { color: var(--yellow); }
+.performer-rank.silver { color: #9099b8; }
+.performer-rank.bronze { color: #b87050; }
+
+.performer-sym {
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.performer-dir {
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: 6px;
+  transition: var(--transition);
+}
+
+.performer-dir.long { color: var(--blue); background: var(--blue-bg); }
+.performer-dir.short { color: var(--red); background: var(--red-bg); }
+
+.performer-roi {
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  transition: var(--transition);
+}
+
+.performer-roi.pos { color: var(--green); }
+.performer-roi.neg.long { color: var(--blue); }
+.performer-roi.neg.short { color: var(--red); }
+
+/* ── Positions Table ── */
+.positions {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.pos-header {
+  display: flex;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  gap: 4px;
+}
+
+.pos-header span {
+  font-size: 7px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--dim);
+  font-weight: 700;
+  text-align: right;
+  transition: var(--transition);
+}
+
+.pos-header span:first-child { text-align: left; width: 52px; flex-shrink: 0; }
+.pos-header span:nth-child(2) { width: 44px; flex-shrink: 0; }
+.pos-header span:nth-child(3) { flex: 1; text-align: left; }
+.pos-header span:nth-child(4) { width: 58px; flex-shrink: 0; }
+.pos-header span:nth-child(5) { width: 58px; flex-shrink: 0; }
+.pos-header span:nth-child(6) { width: 54px; flex-shrink: 0; }
+.pos-header span:nth-child(7) { width: 54px; flex-shrink: 0; }
+.pos-header span:nth-child(8) { width: 52px; flex-shrink: 0; }
+
+.pos-row {
+  display: flex;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(28,30,56,0.5);
+  transition: var(--transition);
+  gap: 4px;
+  animation: fadeUp 0.3s ease-out both;
+}
+
+.pos-row:last-child { border-bottom: none; }
+.pos-row:hover { background: var(--surface2); }
+
+.pos-row.long { border-left: 3px solid var(--blue); padding-left: 9px; }
+.pos-row.short { border-left: 3px solid var(--red); padding-left: 9px; }
+
+.pos-cell {
+  font-size: 10px;
+  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  transition: var(--transition);
+}
+
+.pos-cell.sym {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  justify-content: flex-start;
+  width: 52px;
+  flex-shrink: 0;
+}
+
+.pos-cell:nth-child(2) {
+  width: 44px;
+  flex-shrink: 0;
+  justify-content: flex-start;
+}
+
+.pos-cell:nth-child(3) { flex: 1; justify-content: flex-start; }
+.pos-cell:nth-child(4) { width: 58px; flex-shrink: 0; }
+.pos-cell:nth-child(5) { width: 58px; flex-shrink: 0; }
+.pos-cell:nth-child(6) { width: 54px; flex-shrink: 0; color: var(--red); font-size: 9px; font-weight: 600; }
+.pos-cell:nth-child(7) { width: 54px; flex-shrink: 0; color: var(--green); font-size: 9px; font-weight: 600; }
+.pos-cell:nth-child(8) { width: 52px; flex-shrink: 0; }
+
+.badge {
+  font-size: 7px;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 4px;
+  transition: var(--transition);
+}
+
+.badge.long { background: var(--blue-bg); color: var(--blue); }
+.badge.short { background: var(--red-bg); color: var(--red); }
+
+.price { color: var(--muted); font-size: 9px; }
+.price.current { color: var(--text); font-weight: 600; }
+
+.roi { font-size: 10px; font-weight: 800; transition: var(--transition); }
+.roi.g { color: var(--green); }
+.roi.r { color: var(--red); }
+
+/* ── Status Bar ── */
+.status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(13,15,26,0.95);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 8px;
+  color: var(--dim);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  transition: var(--transition);
+}
+
+.status-item span { color: var(--green); }
+.algo-status { color: var(--dim); }
+.algo-status.active { color: var(--green); }
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Responsive ── */
+@media (max-width: 540px) {
+  html { font-size: 12px; }
+  .balance-value { font-size: 28px; }
+  
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
   }
-  .td,.th span{padding:9px 0;font-size:9px}
-  .t3 .roi{font-size:16px}
-  .t3 .sym{font-size:12px}
-  .stats-row{grid-template-columns:repeat(2,1fr)}
+  
+  .stat-box { padding: 8px 6px; }
+  .stat-box:hover { transform: translateY(-1px); }
+  .stat-value { font-size: 14px; }
+  
+  .performers { gap: 6px; }
+  .performer { padding: 10px 8px; }
+  .performer:hover { transform: translateY(-2px); }
+  .performer-roi { font-size: 16px; }
+  
+  .pos-header, .pos-row { padding: 6px 8px; gap: 2px; }
+  
+  .pos-header span:first-child { width: 44px; }
+  .pos-header span:nth-child(2) { width: 38px; }
+  .pos-header span:nth-child(4), .pos-header span:nth-child(5) { width: 48px; }
+  .pos-header span:nth-child(6), .pos-header span:nth-child(7) { width: 46px; }
+  .pos-header span:nth-child(8) { width: 44px; }
+  
+  .pos-cell.sym { width: 44px; font-size: 10px; }
+  .pos-cell:nth-child(2) { width: 38px; }
+  .pos-cell:nth-child(4), .pos-cell:nth-child(5) { width: 48px; }
+  .pos-cell:nth-child(6), .pos-cell:nth-child(7) { width: 46px; font-size: 8px; }
+  .pos-cell:nth-child(8) { width: 44px; }
+  
+  .refresh-btn { width: 26px; height: 26px; font-size: 13px; }
+  
+  .status-bar {
+    font-size: 7px;
+    padding: 6px 10px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 380px) {
+  .logo-text { font-size: 13px; }
+  .logo-icon { width: 32px; height: 32px; font-size: 16px; }
+  .balance-value { font-size: 24px; }
+  .toggle-btn { padding: 8px 12px; font-size: 12px; }
 }
 </style>
 </head>
 <body>
 
-<div class="hdr">
-  <div class="logo">
-    <div class="logo-icon">🐱</div>
-    <div class="logo-text">NEKO<span>.TRADING</span></div>
+<div class="container">
+  <header class="hdr">
+    <div class="logo">
+      <div class="logo-icon">🐱</div>
+      <div class="logo-text">NEKO<span>.TRADING</span></div>
+    </div>
+    <button class="toggle-btn" id="togBtn" onclick="toggleAll()">👁️</button>
+  </header>
+
+  <div class="balance-card">
+    <div class="balance-label">Total Balance</div>
+    <div class="balance-value blur" id="bal">$--</div>
+    <div class="balance-pnl" id="pnl">+-- USDT</div>
   </div>
-  <button class="btn-eye" id="togBal" onclick="toggleBal()" title="Show/Hide Balance">👁</button>
+
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-box">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value y" id="winrate">--%</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Closed PnL</div>
+      <div class="stat-value" id="closedPnl">$--</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Avg Win</div>
+      <div class="stat-value g" id="avgWin">$--</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Avg Loss</div>
+      <div class="stat-value r" id="avgLoss">$--</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Top Performers</div>
+    </div>
+    <div class="performers" id="performers"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Open Positions</div>
+      <button class="refresh-btn" id="refreshBtn" onclick="load()">🔄</button>
+    </div>
+    <div class="positions">
+      <div class="pos-header">
+        <span>Symbol</span>
+        <span>Dir</span>
+        <span></span>
+        <span>Entry</span>
+        <span>Now</span>
+        <span>SL</span>
+        <span>TP</span>
+        <span>ROI</span>
+      </div>
+      <div id="positions"></div>
+    </div>
+  </div>
 </div>
 
-<div class="balance-section">
-  <div class="bal-label">Total Balance</div>
-  <div class="bal-value blur" id="bal">$--</div>
-  <div class="bal-pnl" id="pnl">+-- USDT</div>
-</div>
-
-<!-- Stats Row -->
-<div class="stats-row">
-  <div class="stat-card">
-    <div class="label">Win Rate</div>
-    <div class="value yellow" id="winrate">--%</div>
-  </div>
-  <div class="stat-card">
-    <div class="label">Closed PnL</div>
-    <div class="value" id="closedPnl">$--</div>
-  </div>
-  <div class="stat-card">
-    <div class="label">Avg Win</div>
-    <div class="value green" id="avgWin">$--</div>
-  </div>
-  <div class="stat-card">
-    <div class="label">Avg Loss</div>
-    <div class="value red" id="avgLoss">$--</div>
-  </div>
-</div>
-
-<div class="top3" id="top3"></div>
-
-<div class="section-label">Open Positions</div>
-<div class="tbl">
-  <div class="th">
-    <span>Symbol</span><span>Dir</span><span></span>
-    <span>Entry</span><span>Now</span>
-    <span>SL</span><span>TP</span><span>ROI</span>
-  </div>
-  <div id="list"></div>
-</div>
-
-<button class="btn-refresh" onclick="load()">
-  <span id="refreshIcon">🔄</span>
-  <span id="refreshLabel">Refresh</span>
-</button>
-
-<div class="status">
-  <div>🔍 Scanner <span>Active</span></div>
-  <div>⏱ Monitor <span>Active</span></div>
-  <div>📊 Algo SL/TP <span id="algoStatus" class="status-algo">Checking...</span></div>
-  <div>built by <strong style="color:var(--yellow)">Neko Sentinel</strong> 🐱</div>
+<div class="status-bar">
+  <div class="status-item">🔍 Scanner <span>Active</span></div>
+  <div class="status-item">⏱ Monitor <span>Active</span></div>
+  <div class="status-item algo-status" id="algoStatus">📊 Algo SL/TP: --</div>
+  <div>Built by <strong style="color:var(--yellow)">Neko Sentinel</strong> 🐱</div>
 </div>
 
 <script>
-let balHidden = true;
+let allHidden = true;
 
-function toggleBal() {
-  balHidden = !balHidden;
-  const el = document.getElementById('bal');
-  const btn = document.getElementById('togBal');
-  el.classList.toggle('blur', balHidden);
-  btn.classList.toggle('active', !balHidden);
+function toggleAll() {
+  allHidden = !allHidden;
+  const btn = document.getElementById('togBtn');
+  const pnl = document.getElementById('pnl');
+  const stats = document.getElementById('statsGrid');
+  const bal = document.getElementById('bal');
+  
+  if (allHidden) {
+    bal.classList.add('blur');
+    pnl.style.display = 'none';
+    stats.style.display = 'none';
+    btn.classList.remove('active');
+  } else {
+    bal.classList.remove('blur');
+    pnl.style.display = 'block';
+    stats.style.display = 'grid';
+    btn.classList.add('active');
+  }
 }
 
 function roi(p) {
@@ -327,7 +611,7 @@ function roi(p) {
   return n > 0 ? (p.u / n) * 100 : 0;
 }
 
-function fmt(v, d=4) {
+function fmt(v, d = 4) {
   if (!v && v !== 0) return '--';
   return '$' + v.toFixed(d);
 }
@@ -345,115 +629,106 @@ let loading = false;
 async function load() {
   if (loading) return;
   loading = true;
-  const icon = document.getElementById('refreshIcon');
-  const label = document.getElementById('refreshLabel');
-  icon.classList.add('spinning');
-  label.textContent = 'Loading...';
+  
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('spinning');
+  btn.textContent = '🔄';
 
   let data;
   try {
-    const r = await fetch('/api', {signal:AbortSignal.timeout(12000)});
+    const r = await fetch('/api', { signal: AbortSignal.timeout(10000) });
     data = await r.json();
-    document.getElementById('refreshIcon').classList.remove('spinning');
-    icon.classList.remove('spinning');
-    label.textContent = 'Refresh';
-  } catch(e) {
-    label.textContent = 'Retry';
-    icon.classList.remove('spinning');
-    document.getElementById('list').innerHTML =
-      '<div style="padding:30px;text-align:center;color:var(--muted)">Connection failed</div>';
+  } catch (e) {
     loading = false;
+    btn.classList.remove('spinning');
+    btn.textContent = '🔄';
     return;
   }
 
-  if (!balHidden) document.getElementById('bal').classList.remove('blur');
-  document.getElementById('bal').textContent = '$' + (data.bal||0).toFixed(2);
-  const pnl = data.pnl||0;
+  if (!allHidden) document.getElementById('bal').classList.remove('blur');
+  document.getElementById('bal').textContent = '$' + (data.bal || 0).toFixed(2);
+  
+  const pnl = data.pnl || 0;
   const pnlEl = document.getElementById('pnl');
-  pnlEl.textContent = (pnl>=0?'+':'') + '$' + pnl.toFixed(2) + ' USDT';
-  pnlEl.style.color = pnl>=0 ? 'var(--green)' : 'var(--red)';
+  pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' USDT';
+  pnlEl.className = 'balance-pnl' + (pnl < 0 ? ' negative' : '');
 
-  // Stats from income history
   const stats = data.stats || {};
   const winrate = stats.winrate || 0;
   const closedPnl = stats.closed_pnl || 0;
   const avgWin = stats.avg_win || 0;
   const avgLoss = stats.avg_loss || 0;
-  
-  document.getElementById('winrate').textContent = winrate.toFixed(1) + '%';
-  const closedPnlEl = document.getElementById('closedPnl');
-  closedPnlEl.textContent = (closedPnl>=0?'+':'') + '$' + closedPnl.toFixed(2);
-  closedPnlEl.style.color = closedPnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+  const wrEl = document.getElementById('winrate');
+  wrEl.textContent = winrate.toFixed(1) + '%';
+  wrEl.className = 'stat-value ' + (winrate >= 50 ? 'g' : winrate >= 40 ? 'y' : 'r');
+
+  const cpEl = document.getElementById('closedPnl');
+  cpEl.textContent = (closedPnl >= 0 ? '+' : '') + '$' + closedPnl.toFixed(2);
+  cpEl.className = 'stat-value ' + (closedPnl >= 0 ? 'g' : 'r');
+
   document.getElementById('avgWin').textContent = '$' + avgWin.toFixed(2);
   document.getElementById('avgLoss').textContent = '$' + avgLoss.toFixed(2);
-  
-  // Winrate color based on value
-  const winrateEl = document.getElementById('winrate');
-  if (winrate >= 50) {
-    winrateEl.style.color = 'var(--green)';
-  } else if (winrate >= 40) {
-    winrateEl.style.color = 'var(--yellow)';
-  } else {
-    winrateEl.style.color = 'var(--red)';
-  }
 
-  // Algo orders status
   const algoEl = document.getElementById('algoStatus');
   if (data.algo && data.algo.has_algo) {
-    algoEl.textContent = data.algo.count + ' Active';
-    algoEl.className = 'status-algo active';
+    algoEl.textContent = '📊 Algo: ' + data.algo.count + ' active';
+    algoEl.className = 'algo-status active';
   } else {
-    algoEl.textContent = 'None';
-    algoEl.className = 'status-algo';
+    algoEl.textContent = '📊 Algo: None';
+    algoEl.className = 'algo-status';
   }
 
-  const pos = data.pos||[];
-  document.getElementById('cnt');
+  const pos = data.pos || [];
 
-  // Top 3 performers
-  const sorted = [...pos].sort((a,b) => roi(b) - roi(a)).slice(0,3);
-  const medals = ['gold','silver','bronze'];
-  const nums = ['①','②','③'];
-  document.getElementById('top3').innerHTML = sorted.length ? sorted.map((p,i) => {
+  const sorted = [...pos].sort((a, b) => roi(b) - roi(a)).slice(0, 3);
+  const medals = ['gold', 'silver', 'bronze'];
+  const nums = ['①', '②', '③'];
+  
+  document.getElementById('performers').innerHTML = sorted.length ? sorted.map((p, i) => {
     const r = roi(p);
     const isLong = p.d === 'LONG';
-    return `<div class="t3">
-      <div class="rank ${medals[i]}">${nums[i]}</div>
-      <div class="sym">${p.s}</div>
-      <div class="dir ${isLong?'long':'short'}">${p.d}</div>
-      <div class="roi ${isLong?'long':'short'}">${fmtROI(r)}</div>
+    const isWin = r > 0;
+    const roiClass = isWin ? 'pos' : (isLong ? 'neg long' : 'neg short');
+    return `<div class="performer">
+      <div class="performer-rank ${medals[i]}">${nums[i]}</div>
+      <div class="performer-sym">${p.s}</div>
+      <div class="performer-dir ${isLong ? 'long' : 'short'}">${p.d}</div>
+      <div class="performer-roi ${roiClass}">${fmtROI(r)}</div>
     </div>`;
-  }).join('') : '<div style="color:var(--muted);padding:10px 0">No positions</div>';
+  }).join('') : '<div style="color:var(--muted);padding:12px;text-align:center">No positions</div>';
 
-  // Table
   if (!pos.length) {
-    document.getElementById('list').innerHTML =
-      '<div style="padding:30px;text-align:center;color:var(--muted)">No open positions</div>';
+    document.getElementById('positions').innerHTML = 
+      '<div style="padding:16px;text-align:center;color:var(--muted)">No open positions</div>';
     loading = false;
+    btn.classList.remove('spinning');
     return;
   }
 
-  document.getElementById('list').innerHTML = pos.map(p => {
+  document.getElementById('positions').innerHTML = pos.map(p => {
     const r = roi(p);
     const isLong = p.d === 'LONG';
-    const slv = sl(p), tpv = tp(p);
-    return `<div class="tr ${isLong?'long-row':'short-row'}">
-      <div class="td sym">${p.s}</div>
-      <div class="td" style="justify-content:flex-start">
-        <span class="badge ${isLong?'long':'short'}">${p.d}</span>
-      </div>
-      <div class="td"></div>
-      <div class="td price lg">${fmt(p.e)}</div>
-      <div class="td price lg">${fmt(p.m)}</div>
-      <div class="td sl">${fmt(slv)}</div>
-      <div class="td tp">${fmt(tpv)}</div>
-      <div class="td roi ${r>=0?'g':'r'}">${fmtROI(r)}</div>
+    return `<div class="pos-row ${isLong ? 'long' : 'short'}">
+      <div class="pos-cell sym">${p.s}</div>
+      <div class="pos-cell"><span class="badge ${isLong ? 'long' : 'short'}">${p.d}</span></div>
+      <div class="pos-cell"></div>
+      <div class="pos-cell price current">${fmt(p.e)}</div>
+      <div class="pos-cell price current">${fmt(p.m)}</div>
+      <div class="pos-cell">${fmt(sl(p))}</div>
+      <div class="pos-cell">${fmt(tp(p))}</div>
+      <div class="pos-cell roi ${r >= 0 ? 'g' : 'r'}">${fmtROI(r)}</div>
     </div>`;
   }).join('');
 
   loading = false;
-  label.textContent = 'Refresh';
+  btn.classList.remove('spinning');
 }
+
+// Init
+document.getElementById('pnl').style.display = 'none';
+document.getElementById('statsGrid').style.display = 'none';
+document.getElementById('bal').classList.add('blur');
 
 load();
 setInterval(load, 30000);
