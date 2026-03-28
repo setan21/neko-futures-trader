@@ -708,6 +708,12 @@ def analyze_symbol(symbol, stats):
     if abs(price_change) < 3:
         return None
     
+    # Direction - Detect LONG or SHORT based on momentum (MUST BE FIRST)
+    if price_change > 0:
+        direction = "LONG"
+    else:
+        direction = "SHORT"
+    
     # EMA Filter - for LONG, price should be near or below 21EMA (not extended)
     # ema_position > 80 means price is extended above ATR bands
     if direction == "LONG" and ema_position > 85:
@@ -726,12 +732,6 @@ def analyze_symbol(symbol, stats):
     # ATR for SL/TP
     atr = calc_atr(candles, 14) or (current * 0.02)
     atr_pct = (atr / current * 100) if current > 0 else 0
-    
-    # Direction - Detect LONG or SHORT based on momentum
-    if price_change > 0:
-        direction = "LONG"
-    else:
-        direction = "SHORT"
     
     # RSI Filter - reject signals at extremes
     if direction == "LONG" and rsi_overbought:
@@ -1150,13 +1150,22 @@ def main():
                 # Floor to step size to pass Binance LOT_SIZE filter
                 quantity = math.floor(qty_raw / step_size) * step_size
                 
-                # Ensure minimum notional ($5 Binance minimum)
-                if quantity * analysis['current'] < min_notional:
-                    quantity = math.floor(min_notional / analysis["current"] / step_size) * step_size
+                # Ensure minimum notional ($5 Binance minimum) - recalculate if needed
+                notional = quantity * analysis['current']
+                if notional < min_notional:
+                    # Need more quantity to meet notional requirement
+                    quantity = math.ceil(min_notional / analysis['current'] / step_size) * step_size
+                    notional = quantity * analysis['current']
                 
                 # Ensure quantity >= minimum
                 if quantity < min_qty:
                     quantity = min_qty
+                    notional = quantity * analysis['current']
+                
+                # Final check - if still not meeting notional, skip this signal
+                if notional < min_notional:
+                    print(f"  Skipped: notional ${notional:.2f} < ${min_notional}")
+                    return None
                 
                 set_leverage(symbol, LEVERAGE)
                 

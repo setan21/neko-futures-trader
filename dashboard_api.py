@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Dashboard API server - threaded with 25-second Binance cache.
-Each HTTP request runs in its own thread so slow Binance API calls don't block.
+Enhanced with:
+- Winrate & closed PnL from income history
+- Average win/loss calculation
+- Algo orders status
 """
 import os, json, time, hmac, hashlib, requests, socketserver, mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -23,6 +26,71 @@ SECRET   = os.environ['BINANCE_SECRET']
 _CACHE_TTL   = 25           # seconds
 _CACHE       = {'data': None, 'timestamp': 0}
 _CACHE_LOCK  = Lock()
+
+
+def get_signature(params):
+    return hmac.new(SECRET.encode(), params.encode(), hashlib.sha256).hexdigest()
+
+
+def get_income_history(days=30):
+    """Fetch income history for winrate and closed PnL"""
+    try:
+        ts = int(time.time() * 1000)
+        start_time = int((time.time() - days * 24 * 60 * 60) * 1000)
+        params = f'timestamp={ts}&startTime={start_time}&limit=100'
+        sig = get_signature(params)
+        url = f'https://fapi.binance.com/fapi/v1/income?{params}&signature={sig}'
+        r = requests.get(url, headers={'X-MBX-APIKEY': API_KEY}, timeout=10)
+        
+        if r.status_code != 200:
+            return None
+            
+        data = r.json()
+        realized_trades = [t for t in data if t.get('incomeType') == 'REALIZED_PNL']
+        
+        wins = [t for t in realized_trades if float(t.get('income', 0)) > 0]
+        losses = [t for t in realized_trades if float(t.get('income', 0)) < 0]
+        
+        closed_pnl = sum(float(t.get('income', 0)) for t in realized_trades)
+        total_wins = sum(float(t.get('income', 0)) for t in wins)
+        total_losses = abs(sum(float(t.get('income', 0)) for t in losses))
+        
+        avg_win = total_wins / len(wins) if wins else 0
+        avg_loss = total_losses / len(losses) if losses else 0
+        
+        return {
+            'closed_pnl': closed_pnl,
+            'total_trades': len(realized_trades),
+            'wins': len(wins),
+            'losses': len(losses),
+            'winrate': (len(wins) / len(realized_trades) * 100) if realized_trades else 0,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'expectancy': (avg_win * len(wins) + (-avg_loss) * len(losses)) / len(realized_trades) if realized_trades else 0
+        }
+    except Exception as e:
+        print(f'[dashboard_api] Income API error: {e}')
+        return None
+
+
+def get_algo_orders():
+    """Check algo orders via SAPI endpoint"""
+    try:
+        ts = int(time.time() * 1000)
+        params = f'timestamp={ts}'
+        sig = get_signature(params)
+        url = f'https://api.binance.com/sapi/v1/algo/futures/openOrders?{params}&signature={sig}'
+        r = requests.get(url, headers={'X-MBX-APIKEY': API_KEY}, timeout=10)
+        
+        if r.status_code == 200:
+            orders = r.json().get('orders', [])
+            return {
+                'count': len(orders),
+                'has_algo': len(orders) > 0
+            }
+    except Exception as e:
+        print(f'[dashboard_api] Algo orders error: {e}')
+    return {'count': 0, 'has_algo': False}
 
 
 def _fetch_fresh():
@@ -63,24 +131,36 @@ def _fetch_fresh():
         headers={'X-MBX-APIKEY': API_KEY}, timeout=8
     )
     bal = float(r2.json().get('totalMarginBalance', 0))
-    return {'bal': bal, 'pnl': pnl, 'pos': pos}
+    
+    # Get income data for closed PnL & winrate
+    income = get_income_history(30)
+    
+    # Get algo orders status
+    algo = get_algo_orders()
+    
+    return {
+        'bal': bal, 
+        'pnl': pnl, 
+        'pos': pos,
+        'stats': income if income else {
+            'closed_pnl': 0, 'total_trades': 0, 'wins': 0, 'losses': 0,
+            'winrate': 0, 'avg_win': 0, 'avg_loss': 0, 'expectancy': 0
+        },
+        'algo': algo
+    }
 
 
 def get_account_data():
     """
     Return cached data if fresh (< CACHE_TTL seconds old),
     otherwise fetch fresh from Binance.
-    On any error, return last known good data with `cached: True`
-    so the dashboard always shows something.
     """
     global _CACHE
     now = time.time()
 
-    # Fast path: cache hit
     if _CACHE['data'] is not None and (now - _CACHE['timestamp']) < _CACHE_TTL:
         return {**_CACHE['data'], 'cached': True}
 
-    # Try to fetch fresh
     try:
         fresh = _fetch_fresh()
         with _CACHE_LOCK:
@@ -91,10 +171,8 @@ def get_account_data():
         print(f'[dashboard_api] Binance API error: {exc}')
         with _CACHE_LOCK:
             if _CACHE['data'] is not None:
-                print('[dashboard_api] Serving stale cached data')
                 return {**_CACHE['data'], 'cached': True, 'err': str(exc)}
-        # No data ever fetched — graceful empty response
-        return {'err': str(exc), 'bal': 0.0, 'pnl': 0.0, 'pos': []}
+        return {'err': str(exc), 'bal': 0.0, 'pnl': 0.0, 'pos': [], 'stats': {}, 'algo': {}}
 
 
 # ── Request handler ───────────────────────────────────────────────────────────
@@ -110,8 +188,7 @@ class H(BaseHTTPRequestHandler):
         try:
             data = get_account_data()
         except Exception as e:
-            data = {'err': str(e), 'bal': 0.0, 'pnl': 0.0, 'pos': []}
-        # Always return 200 so the browser never shows a blank error page
+            data = {'err': str(e), 'bal': 0.0, 'pnl': 0.0, 'pos': [], 'stats': {}, 'algo': {}}
         body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
@@ -121,7 +198,6 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_static(self):
-        """Serve files from /root/.openclaw/workspace/, limited to that directory tree."""
         if '..' in self.path:
             self.send_error(403, 'Forbidden')
             return
@@ -155,7 +231,6 @@ class H(BaseHTTPRequestHandler):
 
 # ── Threaded HTTP server ───────────────────────────────────────────────────────
 class ThreadedHTTPServer(HTTPServer):
-    """Handle each request in a new thread via ThreadingMixIn."""
     daemon_threads   = True
     allow_reuse_address = True
 
