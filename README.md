@@ -1,6 +1,6 @@
 # 🐱 Neko Futures Trader
 
-Automated Bittensor Futures Trading Bot with DCA, SL/TP, and Trailing.
+Automated Binance Futures Trading Bot with advanced signal detection and risk management.
 
 ## 📁 Structure
 
@@ -11,9 +11,9 @@ neko-futures-trader/
 ├── position_command.py     # Check positions
 ├── dashboard_api.py        # Dashboard API server
 ├── emergency_close.py      # Emergency position closer
-├── daily_eval.py          # Daily performance evaluation
-├── config.py              # Trading parameters
-├── lib/                   # Helper modules
+├── daily_eval.py           # Comprehensive daily evaluation
+├── config.py               # Trading parameters
+├── lib/                    # Helper modules
 │   ├── signal_filter.py
 │   ├── ict_indicators.py
 │   ├── advanced_analysis.py
@@ -31,7 +31,7 @@ neko-futures-trader/
 # Install dependencies
 pip install python-dotenv requests pandas numpy scipy scikit-learn
 
-# Setup .env (copy from .env.example)
+# Setup .env
 cp .env.example .env
 nano .env
 
@@ -46,7 +46,7 @@ systemctl start neko-scanner neko-monitor neko-dashboard
 BINANCE_API_KEY=your_key
 BINANCE_SECRET=your_secret
 TELEGRAM_BOT_TOKEN=your_token
-TELEGRAM_CHANNEL=your_channel_id
+TELEGRAM_CHANNEL=your_user_id
 ```
 
 ## 📊 Commands
@@ -55,7 +55,7 @@ TELEGRAM_CHANNEL=your_channel_id
 # Check positions
 python3 position_command.py
 
-# Daily evaluation
+# Daily evaluation (comprehensive)
 python3 daily_eval.py
 
 # Emergency close all
@@ -70,24 +70,46 @@ tail -f logs/pm.log
 
 `https://YOUR_IP:8443/neko-light.html`
 
-## 📈 ATR-Based SL/TP System
+## 📈 Indicators (Signal Scoring)
 
-**ATR = Average True Range** - mengukur volatilitas pasar.
+### Active Indicators
 
-### Why ATR-Based?
+| Indicator | Score | Description |
+|-----------|-------|-------------|
+| Volume Spike | +2 | >3x average volume |
+| Price Change | +1 to +2 | >5% or >10% change |
+| OI Change | +2 | >20% open interest change |
+| Weekly Change | +1 to +2 | >5% or >20% weekly change |
+| EMA Position | Filter | Price must be near/below 21EMA |
 
-| Method | Problem |
-|--------|---------|
-| Fixed % | Salah di market volatil/tenang |
-| **ATR-Based** | Adaptive - menyesuaikan dengan kondisi pasar |
+### Filters (Reject Signals)
 
-### Volatility Tiers
+| Filter | Condition | Action |
+|--------|-----------|--------|
+| RSI LONG | RSI > 70 | Reject LONG |
+| RSI SHORT | RSI < 30 | Reject SHORT |
+| MACD Histogram | Contradicts direction | Reject signal |
+| Bollinger Squeeze | No squeeze + weak move | Reject (chop) |
+| EMA Extended | Price too extended | Reject (chase) |
 
-| Market | ATR Range | SL | TP |
-|--------|-----------|-----|-----|
-| HIGH | > 10% | 3× ATR | 6× ATR |
-| NORMAL | 5-10% | 2.5× ATR | 5× ATR |
-| LOW | < 5% | 2× ATR | 4× ATR |
+### Removed (Poor Accuracy)
+
+- ❌ Breakout/Breakdown
+- ❌ Pocket Pivot
+
+---
+
+## 📊 ATR-Based SL/TP System
+
+**ATR = Average True Range** - measures market volatility.
+
+### R:R Ratio 1:3 (Optimized)
+
+| Volatility | ATR Range | SL | TP | Ratio |
+|------------|-----------|-----|-----|-------|
+| HIGH | > 10% | 2x ATR | 6x ATR | 1:3 |
+| NORMAL | 5-10% | 2x ATR | 6x ATR | 1:3 |
+| LOW | < 5% | 1.5x ATR | 4.5x ATR | 1:3 |
 
 ### Example
 
@@ -95,21 +117,21 @@ tail -f logs/pm.log
 Entry: $100
 ATR: $2 (2%)
 
-HIGH VOL (SL wider to avoid noise):
-  SL = $100 - (3 × $2) = $94
-  TP = $100 + (6 × $2) = $112
-
-LOW VOL (tighter SL/TP):
+HIGH VOL:
   SL = $100 - (2 × $2) = $96
-  TP = $100 + (4 × $2) = $108
+  TP = $100 + (6 × $2) = $112
+  Risk: $4 | Reward: $12 = 1:3 ratio ✅
+
+LOW VOL:
+  SL = $100 - (1.5 × $2) = $97
+  TP = $100 + (4.5 × $2) = $109
+  Risk: $3 | Reward: $9 = 1:3 ratio ✅
 ```
 
-### Advantages
+### Why 1:3 R:R?
 
-- ✅ **Adaptive** - menyesuaikan dengan volatilitas
-- ✅ **Noise filter** - mengurangi false trigger
-- ✅ **Dynamic** - market volatile = SL lebih lebar, tenang = lebih ketat
-- ✅ **Backtested** - terbukti lebih baik dari fixed %
+With 42.9% winrate, you need R:R > 1:1.07 to break even.
+1:3 ratio ensures profitability even with 40% winrate.
 
 ---
 
@@ -122,11 +144,38 @@ LOW VOL (tighter SL/TP):
 | LEVERAGE | 10x | Leverage multiplier |
 | MIN_SCORE | 3 | Min signal score |
 
-**SL/TP:** ATR-based with volatility adaptation
+---
 
-## 🐛 Fixes Applied
+## 🐛 Bug Fixes Applied
 
-- ✅ `/fapi/v1/algoOrder` endpoint
-- ✅ tickSize price rounding
-- ✅ `algoType=CONDITIONAL` parameter
-- ✅ `quantity=0` with `closePosition=true`
+- ✅ Algo order endpoint: `/fapi/v1/algoOrder`
+- ✅ tickSize price rounding (no precision errors)
+- ✅ `quantity=1` + `reduceOnly=true` (works reliably)
+- ✅ Floating point precision in SL/TP
+
+---
+
+## 📊 Daily Evaluation Metrics
+
+The bot sends comprehensive daily reports including:
+
+- Balance & Open PnL
+- Win Rate, R:R, Expectancy
+- Per-symbol performance
+- Blacklist suggestions (worst performers)
+- Trade recommendations
+
+---
+
+## 🔧 Maintenance
+
+```bash
+# Restart services
+systemctl restart neko-scanner neko-monitor neko-dashboard
+
+# Check status
+systemctl status neko-scanner neko-monitor neko-dashboard
+
+# Logs
+journalctl -u neko-scanner -f
+```
