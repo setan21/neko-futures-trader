@@ -1249,6 +1249,11 @@ def format_signal(analysis, stats):
 • Filter: {'✅ PASSED' if filter_signal(s.get('symbol',''), s)[0] else '❌ REJECTED'}
 • Score: {s.get('runner_score', 0)}/10
 
+🆕 PHASE 1 INDICATORS:
+• Divergence: {s.get('divergence', 'NONE')}
+• Confidence: {s.get('confidence', 0.5):.0%}
+• Signal: {s.get('signal_tier', 'NEUTRAL')}
+
 ⏱️ COOLDOWN: 2h after SL
 • Support: {s['support']:.6f}
 • Resistance: {s['resistance']:.6f}
