@@ -549,6 +549,170 @@ def calc_bollinger_squeeze(prices, period=20):
     return 0  # No squeeze
 
 
+def calc_rsi(prices, period=14):
+    """Calculate RSI"""
+    if len(prices) < period + 1:
+        return 50
+    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    gains = [d if d > 0 else 0 for d in deltas[-period:]]
+    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+    avg_gain = sum(gains) / period if gains else 0
+    avg_loss = sum(losses) / period if losses else 0
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def detect_divergence(prices, period=14):
+    """Detect RSI/MACD divergence.
+    
+    Returns:
+        'BULLISH_DIV': Price lower low + indicator higher low
+        'BEARISH_DIV': Price higher high + indicator lower high  
+        'HIDDEN_BULLISH': Trend continuation in uptrend
+        'HIDDEN_BEARISH': Trend continuation in downtrend
+        'NONE': No divergence
+    """
+    if len(prices) < period * 2:
+        return 'NONE'
+    
+    # Get RSI values
+    rsi_values = []
+    for i in range(period, len(prices)):
+        deltas = [prices[j] - prices[j-1] for j in range(i-period+1, i+1)]
+        gains = [d if d > 0 else 0 for d in deltas]
+        losses = [-d if d < 0 else 0 for d in deltas]
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+        rs = avg_gain / avg_loss if avg_loss > 0 else 100
+        rsi_values.append(100 - (100 / (1 + rs)))
+    
+    if len(rsi_values) < 10:
+        return 'NONE'
+    
+    # Compare recent price action vs indicator
+    price_recent = prices[-period:]
+    price_prev = prices[-period*2:-period]
+    
+    price_recent_low = min(price_recent)
+    price_prev_low = min(price_prev)
+    price_recent_high = max(price_recent)
+    price_prev_high = max(price_prev)
+    
+    rsi_recent_low = min(rsi_values[-period:])
+    rsi_prev_low = min(rsi_values[-period*2:-period])
+    rsi_recent_high = max(rsi_values[-period:])
+    rsi_prev_high = max(rsi_values[-period:])
+    
+    # Bullish divergence: price making lower low, RSI higher low
+    if price_recent_low < price_prev_low and rsi_recent_low > rsi_prev_low:
+        return 'BULLISH_DIV'
+    
+    # Bearish divergence: price making higher high, RSI lower high
+    if price_recent_high > price_prev_high and rsi_recent_high < rsi_prev_high:
+        return 'BEARISH_DIV'
+    
+    # Hidden bullish: price higher low, RSI lower low (continuation)
+    if price_recent_low > price_prev_low and rsi_recent_low < rsi_prev_low:
+        return 'HIDDEN_BULLISH'
+    
+    # Hidden bearish: price lower high, RSI higher high (continuation)
+    if price_recent_high < price_prev_high and rsi_recent_high > rsi_prev_high:
+        return 'HIDDEN_BEARISH'
+    
+    return 'NONE'
+
+
+def calc_confidence(analysis, direction):
+    """Calculate confidence score (0-1) based on multiple factors."""
+    score = 0.5  # Base
+    
+    # RSI in good zone (not overbought/oversold) = +0.1
+    rsi = analysis.get('rsi_14', 50)
+    if direction == 'LONG' and 30 < rsi < 60:
+        score += 0.1
+    elif direction == 'SHORT' and 40 < rsi < 70:
+        score += 0.1
+    
+    # MACD histogram aligned = +0.15
+    macd_h = analysis.get('macd_histogram', 0)
+    if direction == 'LONG' and macd_h > 0:
+        score += 0.15
+    elif direction == 'SHORT' and macd_h < 0:
+        score += 0.15
+    
+    # Volume confirmation = +0.1
+    if analysis.get('vol_ratio', 1) > 2:
+        score += 0.1
+    
+    # Bollinger squeeze (potential breakout) = +0.1
+    if analysis.get('squeeze', 0) > 0:
+        score += 0.1
+    
+    # EMA position aligned = +0.1
+    ema_pos = analysis.get('ema_position', 50)
+    if direction == 'LONG' and ema_pos < 50:
+        score += 0.1
+    elif direction == 'SHORT' and ema_pos > 50:
+        score += 0.1
+    
+    # Strong weekly change = +0.1
+    weekly = abs(analysis.get('weekly_change', 0))
+    if weekly > 10:
+        score += 0.1
+    
+    return min(1.0, max(0.0, score))
+
+
+def get_signal_tier(score, direction):
+    """Convert confidence score to 7-tier signal.
+    
+    For LONG/BUY signals:
+    - STRONG_BUY: score >= 0.8
+    - BUY: score >= 0.65
+    - WEAK_BUY: score >= 0.5
+    - NEUTRAL: score >= 0.4
+    - WEAK_SELL: score >= 0.3
+    - SELL: score >= 0.15
+    - STRONG_SELL: score < 0.15
+    
+    For SHORT/SELL signals (inverted):
+    - STRONG_SELL: score <= 0.2
+    - SELL: score <= 0.35
+    - WEAK_SELL: score <= 0.5
+    - NEUTRAL: score > 0.5
+    """
+    if direction == 'LONG':
+        if score >= 0.8:
+            return 'STRONG_BUY'
+        elif score >= 0.65:
+            return 'BUY'
+        elif score >= 0.5:
+            return 'WEAK_BUY'
+        elif score >= 0.4:
+            return 'NEUTRAL'
+        elif score >= 0.3:
+            return 'WEAK_SELL'
+        elif score >= 0.15:
+            return 'SELL'
+        else:
+            return 'STRONG_SELL'
+    else:  # SHORT
+        if score <= 0.2:
+            return 'STRONG_SELL'
+        elif score <= 0.35:
+            return 'SELL'
+        elif score <= 0.5:
+            return 'WEAK_SELL'
+        elif score <= 0.65:
+            return 'NEUTRAL'
+        elif score <= 0.8:
+            return 'WEAK_BUY'
+        else:
+            return 'STRONG_BUY'
+
+
 def calc_macd(prices, fast=12, slow=26, signal=9):
     """Calculate MACD histogram. Returns (macd, signal_line, histogram)"""
     if len(prices) < slow:
@@ -802,6 +966,25 @@ def analyze_symbol(symbol, stats):
             # MACD bullish - reject SHORT
             return None
     
+    # Calculate divergence for signal quality
+    divergence = detect_divergence(closes)
+    
+    # Calculate confidence score
+    temp_analysis = {
+        'rsi_14': rsi_14,
+        'macd_histogram': histogram if histogram is not None else 0,
+        'vol_ratio': vol_ratio,
+        'squeeze': squeeze,
+        'ema_position': ema_position,
+        'weekly_change': weekly_change,
+    }
+    confidence = calc_confidence(temp_analysis, direction)
+    signal_tier = get_signal_tier(confidence, direction)
+    
+    # REJECT if confidence too low (< 0.4)
+    if confidence < 0.4:
+        return None
+    
     # Bollinger Squeeze Filter - detect low volatility before breakout
     squeeze = calc_bollinger_squeeze(closes)
     # Squeeze is positive filter - higher = better for breakout
@@ -911,7 +1094,11 @@ def analyze_symbol(symbol, stats):
         'vcs_score': vcs_score,
         'trend_base': trend_base,
         'pp_count': pp_count,
-        'ema_position': ema_position
+        'ema_position': ema_position,
+        # Phase 1: Divergence, Confidence, Signal Tier
+        'divergence': 'NONE',
+        'confidence': 0.5,
+        'signal_tier': 'NEUTRAL'
     }
 
 def fetch_brave_news(query, count=2):
