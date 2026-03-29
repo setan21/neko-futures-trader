@@ -713,6 +713,21 @@ def get_signal_tier(score, direction):
             return 'STRONG_BUY'
 
 
+def calc_williams_r(high, low, close, period=14):
+    """Calculate Williams %R - best oscillating indicator per backtests"""
+    if len(high) < period:
+        return -50  # Neutral
+    
+    highest_high = max(high[-period:])
+    lowest_low = min(low[-period:])
+    
+    if highest_high == lowest_low:
+        return -50
+    
+    wr = ((highest_high - close) / (highest_high - lowest_low)) * -100
+    return wr
+
+
 def calc_macd(prices, fast=12, slow=26, signal=9):
     """Calculate MACD histogram. Returns (macd, signal_line, histogram)"""
     if len(prices) < slow:
@@ -918,7 +933,7 @@ def analyze_symbol(symbol, stats):
     if rsi_signal: runner_score += 1  # RSI <30 or >70
     if extra_vol_score > 0: runner_score += extra_vol_score  # Volume 5x+ (extra +2)
     
-    # Must have at least score 3 for signal
+    # Must have at least MIN_SCORE
     if runner_score < MIN_SCORE:
         return None
     
@@ -926,7 +941,18 @@ def analyze_symbol(symbol, stats):
     if abs(price_change) < 3:
         return None
     
-    # Direction - Detect LONG or SHORT based on momentum (MUST BE FIRST)
+    # Debug: log score breakdown for analysis
+    debug_info = {
+        'vol': vol_ratio,
+        'chg': price_change,
+        'weekly': weekly_change,
+        'oi': oi_change,
+        'ema': ema_position,
+        'rsi': rsi_14,
+        'score': runner_score
+    }
+    
+    # Direction - Detect LONG or SHORT (MUST BE FIRST)
     if price_change > 0:
         direction = "LONG"
     else:
@@ -951,10 +977,8 @@ def analyze_symbol(symbol, stats):
     atr = calc_atr(candles, 14) or (current * 0.02)
     atr_pct = (atr / current * 100) if current > 0 else 0
     
-    # RSI Filter - reject signals at extremes
-    if direction == "LONG" and rsi_overbought:
-        # Don't LONG when RSI overbought (>70) - too risky
-        return None
+    # RSI Signal - just log, don't reject (research shows RSI alone is not reliable)
+    rsi_signal = "OB" if rsi_14 > 70 else "OS" if rsi_14 < 30 else "Neutral"
 
     # MACD Histogram Filter - confirm momentum direction
     macd_line, signal_line, histogram = calc_macd(closes)
@@ -974,24 +998,19 @@ def analyze_symbol(symbol, stats):
         'rsi_14': rsi_14,
         'macd_histogram': histogram if histogram is not None else 0,
         'vol_ratio': vol_ratio,
-        'squeeze': squeeze,
+        'squeeze': 0,  # placeholder
         'ema_position': ema_position,
         'weekly_change': weekly_change,
     }
     confidence = calc_confidence(temp_analysis, direction)
     signal_tier = get_signal_tier(confidence, direction)
     
-    # REJECT if confidence too low (< 0.4)
-    if confidence < 0.4:
-        return None
+
     
-    # Bollinger Squeeze Filter - detect low volatility before breakout
+    # Bollinger Squeeze - just score it, don't reject
     squeeze = calc_bollinger_squeeze(closes)
-    # Squeeze is positive filter - higher = better for breakout
-    # Don't require squeeze, but prefer it
-    if squeeze == 0 and abs(price_change) < 5:
-        # No squeeze and no strong move - likely chop
-        return None
+    if squeeze > 0:
+        runner_score += 1  # Squeeze is good for volatility breakout
     if direction == "SHORT" and rsi_oversold:
         # Don't SHORT when RSI oversold (<30) - too risky  
         return None
@@ -1098,7 +1117,9 @@ def analyze_symbol(symbol, stats):
         # Phase 1: Divergence, Confidence, Signal Tier
         'divergence': 'NONE',
         'confidence': 0.5,
-        'signal_tier': 'NEUTRAL'
+        'signal_tier': 'NEUTRAL',
+        'macd_histogram': macd_histogram if macd_histogram is not None else 0,
+        'squeeze': squeeze if 'squeeze' in locals() else 0,
     }
 
 def fetch_brave_news(query, count=2):
