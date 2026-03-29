@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Dashboard API server - threaded with 25-second Binance cache.
+Each HTTP request runs in its own thread so slow Binance API calls don't block.
+
 Enhanced with:
 - Winrate & closed PnL from income history
 - Average win/loss calculation
@@ -26,6 +28,7 @@ SECRET   = os.environ['BINANCE_SECRET']
 _CACHE_TTL   = 25           # seconds
 _CACHE       = {'data': None, 'timestamp': 0}
 _CACHE_LOCK  = Lock()
+_INCOME_CACHE = {'data': None, 'timestamp': 0}
 
 
 def get_signature(params):
@@ -34,9 +37,16 @@ def get_signature(params):
 
 def get_income_history(days=7):
     """Fetch income history for winrate and closed PnL"""
+    global _INCOME_CACHE
+    now = time.time()
+    
+    # Use cache if fresh
+    if _INCOME_CACHE['data'] is not None and (now - _INCOME_CACHE['timestamp']) < 300:
+        return _INCOME_CACHE['data']
+    
     try:
-        ts = int(time.time() * 1000)
-        start_time = int((time.time() - days * 24 * 60 * 60) * 1000)
+        ts = int(now * 1000)
+        start_time = int((now - days * 24 * 60 * 60) * 1000)
         params = f'timestamp={ts}&startTime={start_time}&limit=100'
         sig = get_signature(params)
         url = f'https://fapi.binance.com/fapi/v1/income?{params}&signature={sig}'
@@ -58,7 +68,7 @@ def get_income_history(days=7):
         avg_win = total_wins / len(wins) if wins else 0
         avg_loss = total_losses / len(losses) if losses else 0
         
-        return {
+        result = {
             'closed_pnl': closed_pnl,
             'total_trades': len(realized_trades),
             'wins': len(wins),
@@ -68,6 +78,10 @@ def get_income_history(days=7):
             'avg_loss': avg_loss,
             'expectancy': (avg_win * len(wins) + (-avg_loss) * len(losses)) / len(realized_trades) if realized_trades else 0
         }
+        
+        _INCOME_CACHE['data'] = result
+        _INCOME_CACHE['timestamp'] = now
+        return result
     except Exception as e:
         print(f'[dashboard_api] Income API error: {e}')
         return None
