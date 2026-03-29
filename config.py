@@ -41,7 +41,7 @@ NOTIFY_ON_TRAILING_TP = True
 # ── SCANNER ──────────────────────────────────────────────────────────────────
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
 MIN_PRICE_CHANGE = 3.0          # Min % price change for signal
-MIN_SCORE = 3                    # Min signal score (1-10)
+MIN_SCORE = 1  # Just need price change                    # Min signal score (1-10)
 SKIP_RECENT_HOURS = 24           # Skip re-entry for 24h after close
 
 # ── RISK ─────────────────────────────────────────────────────────────────────
