@@ -1199,7 +1199,7 @@ def analyze_symbol(symbol, stats):
         'divergence': 'NONE',
         'confidence': 0.5,
         'signal_tier': 'NEUTRAL',
-        'macd_histogram': macd_histogram if macd_histogram is not None else 0,
+        'macd_histogram': histogram if 'histogram' in locals() else 0,
         'squeeze': squeeze if 'squeeze' in locals() else 0,
         # Grid Scanner
         'grid_signal': grid_signal if 'grid_signal' in locals() else None,
