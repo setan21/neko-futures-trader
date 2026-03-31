@@ -238,7 +238,7 @@ body::before {
 .logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .logo-icon {
@@ -448,7 +448,7 @@ body::before {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 20px;
 }
 
@@ -457,7 +457,7 @@ body::before {
   backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 16px 12px;
+  padding: 14px 10px;
   text-align: center;
   transition: var(--transition);
   position: relative;
@@ -551,9 +551,10 @@ body::before {
 
 /* Top Performers */
 .performers {
+            margin-bottom: 15px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 24px;
 }
 
@@ -834,7 +835,8 @@ body.light .status-bar {
   .stat-box { padding: 14px 10px; }
   .stat-value { font-size: 18px; }
   
-  .performers { gap: 10px; }
+  .performers {
+            margin-bottom: 15px; gap: 10px; }
   .performer { padding: 14px 12px; }
   .performer-roi { font-size: 20px; }
   
