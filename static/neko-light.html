@@ -896,6 +896,7 @@ body.light .status-bar {
         .closed-loss { color: var(--red); }
 
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -1240,10 +1241,12 @@ async function load() {
   let data;
   try {
     const r = await fetch('/api', { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('API error');
     data = await r.json();
   } catch (e) {
     loading = false;
     btn.classList.remove('spinning');
+    showToast('Failed to load data. Check connection.', 'error');
     return;
   }
 
