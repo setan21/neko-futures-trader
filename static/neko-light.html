@@ -971,10 +971,10 @@ body.light .status-bar {
   </div>
 </div>
 
-  <!-- Recently Closed -->
-  <div class="closed-section">
-    <div class="section-title">Recently Closed (7D)</div>
-    <div id="closedTrades"><div style="color:var(--text-muted);padding:10px;text-align:center">Loading...</div></div>
+  <!-- Last Closed Trade -->
+  <div class="closed-section" id="lastTradeSection" style="display:none">
+    <div class="section-title">LAST TRADE</div>
+    <div id="lastTrade"></div>
   </div>
 
 
@@ -1334,16 +1334,17 @@ async function load() {
   // Table with tooltips
   if (!pos.length) {
     const closedTrades = data.closed_trades || [];
-        const closedDiv = document.getElementById('closedTrades');
-        if (closedTrades.length === 0) {
-            closedDiv.innerHTML = '<div style="color:var(--text-muted);padding:10px;text-align:center">No closed trades</div>';
+        const lastTradeSection = document.getElementById('lastTradeSection');
+        const lastTradeDiv = document.getElementById('lastTrade');
+        if (closedTrades && closedTrades.length > 0) {
+            const t = closedTrades[0]; // Most recent
+            const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
+            const prefix = t.pnl >= 0 ? '+' : '';
+            const date = new Date(t.time).toLocaleString();
+            lastTradeDiv.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px"><div><span class="closed-symbol" style="font-size:18px">' + t.symbol.replace('USDT', '') + '</span></div><div><span style="font-size:12px;color:var(--text)">' + date + '</span></div><div class="' + cls + '" style="font-size:18px;font-weight:700">' + prefix + '$' + t.pnl.toFixed(2) + '</div></div>';
+            lastTradeSection.style.display = 'block';
         } else {
-            closedDiv.innerHTML = closedTrades.slice(0, 5).map(t => {
-                const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
-                const prefix = t.pnl >= 0 ? '+' : '';
-                const date = new Date(t.time).toLocaleDateString();
-                return '<div class="closed-row"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span>' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
-            }).join('');
+            lastTradeSection.style.display = 'none';
         }
         
         document.getElementById('positions').innerHTML = 
@@ -1354,16 +1355,17 @@ async function load() {
   }
 
   const closedTrades = data.closed_trades || [];
-        const closedDiv = document.getElementById('closedTrades');
-        if (closedTrades.length === 0) {
-            closedDiv.innerHTML = '<div style="color:var(--text-muted);padding:10px;text-align:center">No closed trades</div>';
+        const lastTradeSection = document.getElementById('lastTradeSection');
+        const lastTradeDiv = document.getElementById('lastTrade');
+        if (closedTrades && closedTrades.length > 0) {
+            const t = closedTrades[0]; // Most recent
+            const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
+            const prefix = t.pnl >= 0 ? '+' : '';
+            const date = new Date(t.time).toLocaleString();
+            lastTradeDiv.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px"><div><span class="closed-symbol" style="font-size:18px">' + t.symbol.replace('USDT', '') + '</span></div><div><span style="font-size:12px;color:var(--text)">' + date + '</span></div><div class="' + cls + '" style="font-size:18px;font-weight:700">' + prefix + '$' + t.pnl.toFixed(2) + '</div></div>';
+            lastTradeSection.style.display = 'block';
         } else {
-            closedDiv.innerHTML = closedTrades.slice(0, 5).map(t => {
-                const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
-                const prefix = t.pnl >= 0 ? '+' : '';
-                const date = new Date(t.time).toLocaleDateString();
-                return '<div class="closed-row"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span>' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
-            }).join('');
+            lastTradeSection.style.display = 'none';
         }
         
         document.getElementById('positions').innerHTML = pos.map((p, idx) => {
