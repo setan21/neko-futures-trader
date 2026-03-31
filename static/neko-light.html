@@ -867,6 +867,15 @@ body.light .status-bar {
             margin-top: 15px;
         }
         
+        .closed-row-small {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .closed-row-small:last-child { border-bottom: none; }
+        
         .closed-row {
             display: flex;
             justify-content: space-between;
@@ -971,9 +980,9 @@ body.light .status-bar {
   </div>
 </div>
 
-  <!-- Last Closed Trade -->
+  <!-- Last Closed Trades -->
   <div class="closed-section" id="lastTradeSection" style="display:none">
-    <div class="section-title">LAST TRADE</div>
+    <div class="section-title">LAST POSITIONS (3)</div>
     <div id="lastTrade"></div>
   </div>
 
@@ -1337,11 +1346,13 @@ async function load() {
         const lastTradeSection = document.getElementById('lastTradeSection');
         const lastTradeDiv = document.getElementById('lastTrade');
         if (closedTrades && closedTrades.length > 0) {
-            const t = closedTrades[0]; // Most recent
-            const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
-            const prefix = t.pnl >= 0 ? '+' : '';
-            const date = new Date(t.time).toLocaleString();
-            lastTradeDiv.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px"><div><span class="closed-symbol" style="font-size:18px">' + t.symbol.replace('USDT', '') + '</span></div><div><span style="font-size:12px;color:var(--text)">' + date + '</span></div><div class="' + cls + '" style="font-size:18px;font-weight:700">' + prefix + '$' + t.pnl.toFixed(2) + '</div></div>';
+            const show = closedTrades.slice(0, 3); // Top 3
+            lastTradeDiv.innerHTML = show.map(t => {
+                const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
+                const prefix = t.pnl >= 0 ? '+' : '';
+                const date = new Date(t.time).toLocaleDateString();
+                return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
+            }).join('');
             lastTradeSection.style.display = 'block';
         } else {
             lastTradeSection.style.display = 'none';
@@ -1358,11 +1369,13 @@ async function load() {
         const lastTradeSection = document.getElementById('lastTradeSection');
         const lastTradeDiv = document.getElementById('lastTrade');
         if (closedTrades && closedTrades.length > 0) {
-            const t = closedTrades[0]; // Most recent
-            const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
-            const prefix = t.pnl >= 0 ? '+' : '';
-            const date = new Date(t.time).toLocaleString();
-            lastTradeDiv.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px"><div><span class="closed-symbol" style="font-size:18px">' + t.symbol.replace('USDT', '') + '</span></div><div><span style="font-size:12px;color:var(--text)">' + date + '</span></div><div class="' + cls + '" style="font-size:18px;font-weight:700">' + prefix + '$' + t.pnl.toFixed(2) + '</div></div>';
+            const show = closedTrades.slice(0, 3); // Top 3
+            lastTradeDiv.innerHTML = show.map(t => {
+                const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
+                const prefix = t.pnl >= 0 ? '+' : '';
+                const date = new Date(t.time).toLocaleDateString();
+                return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
+            }).join('');
             lastTradeSection.style.display = 'block';
         } else {
             lastTradeSection.style.display = 'none';
