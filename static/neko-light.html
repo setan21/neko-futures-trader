@@ -1362,7 +1362,7 @@ async function load() {
             }).join('');
             lastTradeSection.style.display = 'block';
         } else {
-            lastTradeSection.style.display = 'none';
+            lastTradeSection.style.display = 'block';  // Always show
         }
         
         document.getElementById('positions').innerHTML = 
@@ -1385,7 +1385,7 @@ async function load() {
             }).join('');
             lastTradeSection.style.display = 'block';
         } else {
-            lastTradeSection.style.display = 'none';
+            lastTradeSection.style.display = 'block';  // Always show
         }
         
         document.getElementById('positions').innerHTML = pos.map((p, idx) => {
