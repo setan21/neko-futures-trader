@@ -896,7 +896,20 @@ body.light .status-bar {
         .closed-loss { color: var(--red); }
 
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js">
+  function toggleLastPositions() {
+    const section = document.getElementById('lastTradeSection');
+    const content = document.getElementById('lastTrade');
+    const arrow = document.getElementById('lastPosArrow');
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      arrow.style.transform = 'rotate(0deg)';
+    } else {
+      content.style.display = 'none';
+      arrow.style.transform = 'rotate(-90deg)';
+    }
+  }
+</script>
 </head>
 <body>
 
@@ -967,7 +980,10 @@ body.light .status-bar {
 
   <!-- Last Closed Trades -->
   <div class="closed-section" id="lastTradeSection" style="margin: 0px 0; padding: 5px 15px;">
-    <div class="section-title" style="margin-bottom: 10px;">LAST POSITIONS</div>
+    <div class="section-title" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleLastPositions()">
+      <span>LAST POSITIONS</span>
+      <span id="lastPosArrow" style="transition: transform 0.3s;">▼</span>
+    </div>
     <div id="lastTrade"></div>
   </div>
 
@@ -1358,7 +1374,7 @@ async function load() {
                 const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
                 const prefix = t.pnl >= 0 ? '+' : '';
                 const date = new Date(t.time).toLocaleString();
-                return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
+                return '<div class="closed-row-small"><span class="sym">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span>return '<div class="pnl ' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
             }).join('');
             lastTradeSection.style.display = 'block';
         } else {
@@ -1381,7 +1397,7 @@ async function load() {
                 const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
                 const prefix = t.pnl >= 0 ? '+' : '';
                 const date = new Date(t.time).toLocaleString();
-                return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
+                return '<div class="closed-row-small"><span class="sym">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span>return '<div class="pnl ' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
             }).join('');
             lastTradeSection.style.display = 'block';
         } else {
@@ -1425,6 +1441,19 @@ document.getElementById('bal').classList.add('blur');
 
 load();
 setInterval(load, 30000);
+
+  function toggleLastPositions() {
+    const section = document.getElementById('lastTradeSection');
+    const content = document.getElementById('lastTrade');
+    const arrow = document.getElementById('lastPosArrow');
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      arrow.style.transform = 'rotate(0deg)';
+    } else {
+      content.style.display = 'none';
+      arrow.style.transform = 'rotate(-90deg)';
+    }
+  }
 </script>
 </body>
 </html>
