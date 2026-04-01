@@ -905,12 +905,13 @@ body.light .status-bar {
 function toggleLastPos() {
   var content = document.getElementById('lastTrade');
   var arrow = document.getElementById('lastPosArrow');
+  var svg = arrow.querySelector('svg');
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    arrow.textContent = '▼';
+    svg.style.transform = 'rotate(180deg)';
   } else {
     content.style.display = 'none';
-    arrow.textContent = '▶';
+    svg.style.transform = 'rotate(0deg)';
   }
 }
 </script>
@@ -984,7 +985,7 @@ function toggleLastPos() {
 
   <!-- Last Closed Trades -->
   <div class="closed-section" id="lastTradeSection" style="margin: 0px 0; padding: 5px 15px;">
-    <div class="section-title" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleLastPos()"><span>LAST POSITIONS</span><span id="lastPosArrow" style="font-size: 10px;">▼</span></div>
+    <div class="section-title" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;"><span>LAST POSITIONS</span><span id="lastPosArrow" style="font-size: 10px;">▼</span></div>
     <div id="lastTrade"></div>
   </div>
 
@@ -1458,12 +1459,13 @@ setInterval(load, 30000);
 function toggleLastPos() {
   var content = document.getElementById('lastTrade');
   var arrow = document.getElementById('lastPosArrow');
+  var svg = arrow.querySelector('svg');
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    arrow.textContent = '▼';
+    svg.style.transform = 'rotate(180deg)';
   } else {
     content.style.display = 'none';
-    arrow.textContent = '▶';
+    svg.style.transform = 'rotate(0deg)';
   }
 }
 </script>
