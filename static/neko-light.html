@@ -1357,7 +1357,7 @@ async function load() {
             lastTradeDiv.innerHTML = show.map(t => {
                 const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
                 const prefix = t.pnl >= 0 ? '+' : '';
-                const date = new Date(t.time).toLocaleDateString();
+                const date = new Date(t.time).toLocaleString();
                 return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
             }).join('');
             lastTradeSection.style.display = 'block';
@@ -1380,7 +1380,7 @@ async function load() {
             lastTradeDiv.innerHTML = show.map(t => {
                 const cls = t.side === 'WIN' ? 'closed-win' : 'closed-loss';
                 const prefix = t.pnl >= 0 ? '+' : '';
-                const date = new Date(t.time).toLocaleDateString();
+                const date = new Date(t.time).toLocaleString();
                 return '<div class="closed-row-small"><span class="closed-symbol">' + t.symbol.replace('USDT', '') + '</span><span style="color:var(--text)">' + date + '</span><span class="' + cls + '">' + prefix + '$' + t.pnl.toFixed(2) + '</span></div>';
             }).join('');
             lastTradeSection.style.display = 'block';
