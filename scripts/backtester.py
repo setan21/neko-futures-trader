@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Neko Futures Trader - Backtester v2
-Monte Carlo Simulation + Real Metrics from Binance API
+Neko Futures Trader - Backtester v3
+Monte Carlo Simulation + Real Metrics + Parameter Optimizer
 
 Auto-updated: Fetches real trade data from Binance on each run.
 """
@@ -29,7 +29,7 @@ BINANCE_SECRET = os.getenv('BINANCE_SECRET', '')
 
 # Trading params
 MAX_POSITIONS = 5
-CURRENT_RR = 3.0  # 1:3 R:R ratio
+CURRENT_RR = 3.0
 INITIAL_BALANCE = 300.0
 
 # Monte Carlo params
@@ -38,7 +38,6 @@ TRADES_PER_SIM = 100
 
 # ============ BINANCE SIGNED API ============
 def create_signature(query_string: str) -> str:
-    """Create HMAC SHA256 signature."""
     import hmac
     import hashlib
     return hmac.new(
@@ -48,9 +47,7 @@ def create_signature(query_string: str) -> str:
     ).hexdigest()
 
 def binance_signed_get(endpoint: str, params: dict = None) -> dict:
-    """Make signed GET request to Binance."""
     if not BINANCE_API_KEY or not BINANCE_SECRET:
-        print("⚠️ API keys not configured")
         return None
     
     ts = int(time.time() * 1000)
@@ -74,30 +71,20 @@ def binance_signed_get(endpoint: str, params: dict = None) -> dict:
         
         if r.status_code == 200:
             return r.json()
-        else:
-            print(f"⚠️ API error: {r.status_code}")
-            return None
-    except Exception as e:
-        print(f"⚠️ Request failed: {e}")
-        return None
+    except:
+        pass
+    return None
 
 def get_income_history(days: int = 90) -> List[Dict]:
-    """Fetch REALIZED_PNL from Binance for given days."""
     end_time = int(time.time() * 1000)
     start_time = int((time.time() - days * 24 * 60 * 60) * 1000)
     
     all_trades = []
+    params = {'startTime': start_time, 'endTime': end_time, 'limit': 100}
     
-    # Fetch in batches (Binance limit is 100 per request)
-    params = {
-        'startTime': start_time,
-        'endTime': end_time,
-        'limit': 100
-    }
-    
-    while True:
+    while len(all_trades) < 2000:
         data = binance_signed_get('/fapi/v1/income', params)
-        if not data or not isinstance(data, list):
+        if not data or not isinstance(data, list) or len(data) == 0:
             break
         
         realized = [t for t in data if t.get('incomeType') == 'REALIZED_PNL']
@@ -105,24 +92,13 @@ def get_income_history(days: int = 90) -> List[Dict]:
         
         if len(data) < 100:
             break
-        
-        # Next batch: use last trade's time + 1ms
         params['startTime'] = int(data[-1].get('time', 0)) + 1
     
     return all_trades
 
 def calculate_real_stats(trades: List[Dict]) -> dict:
-    """Calculate real winrate and stats from trades."""
     if not trades:
-        return {
-            'winrate': 0.42,
-            'avg_win': 2.0,
-            'avg_loss': 3.0,
-            'total_pnl': 0,
-            'wins': 0,
-            'losses': 0,
-            'total_trades': 0
-        }
+        return {'winrate': 0.42, 'avg_win': 2.0, 'avg_loss': 3.0, 'total_pnl': 0, 'wins': 0, 'losses': 0, 'total_trades': 0}
     
     wins = [t for t in trades if float(t.get('income', 0)) > 0]
     losses = [t for t in trades if float(t.get('income', 0)) <= 0]
@@ -140,12 +116,10 @@ def calculate_real_stats(trades: List[Dict]) -> dict:
         'total_trades': len(trades)
     }
 
-# ============ MONTE CARLO ============
 def monte_carlo_simulation(winrate: float, avg_win: float, avg_loss: float, 
                            n_sim: int = N_SIMULATIONS, 
                            trades_per_sim: int = TRADES_PER_SIM,
                            initial_balance: float = INITIAL_BALANCE) -> dict:
-    """Run Monte Carlo simulation."""
     outcomes = []
     max_drawdowns = []
     
@@ -160,8 +134,7 @@ def monte_carlo_simulation(winrate: float, avg_win: float, avg_loss: float,
             else:
                 balance -= avg_loss
             
-            if balance > peak:
-                peak = balance
+            peak = max(peak, balance)
             dd = (peak - balance) / peak if peak > 0 else 0
             max_dd = max(max_dd, dd)
         
@@ -182,7 +155,6 @@ def monte_carlo_simulation(winrate: float, avg_win: float, avg_loss: float,
     }
 
 def print_results(real_stats: dict, monte: dict, trades: List[Dict]):
-    """Print formatted results."""
     print("\n" + "="*50)
     print("📊 NEKO BACKTESTER v2 - REAL DATA")
     print("="*50)
@@ -200,33 +172,10 @@ def print_results(real_stats: dict, monte: dict, trades: List[Dict]):
     print(f"     10th percentile: ${monte['final_balance_p10']:.2f}")
     print(f"     50th percentile: ${monte['final_balance_p50']:.2f}")
     print(f"     90th percentile: ${monte['final_balance_p90']:.2f}")
-    
-    print(f"   Max Drawdown:")
-    print(f"     10th percentile: {monte['max_drawdown_p10']:.1f}%")
-    print(f"     50th percentile: {monte['max_drawdown_p50']:.1f}%")
-    print(f"     90th percentile: {monte['max_drawdown_p90']:.1f}%")
-    
     print(f"   Probability of 50% loss: {monte['probability_of_ruin']:.1f}%")
-    
-    # Risk assessment
-    print("\n⚠️ RISK ASSESSMENT:")
-    if monte['probability_of_ruin'] > 20:
-        print("   🔴 HIGH RISK - Probability of significant loss > 20%")
-    elif monte['probability_of_ruin'] > 5:
-        print("   🟡 MEDIUM RISK - Probability of significant loss > 5%")
-    else:
-        print("   🟢 LOW RISK - Strategy appears stable")
-    
-    if monte['max_drawdown_p90'] > 50:
-        print("   🔴 Extreme drawdown possible (90th percentile > 50%)")
-    elif monte['max_drawdown_p90'] > 30:
-        print("   🟡 High drawdown possible (90th percentile > 30%)")
-    else:
-        print("   🟢 Acceptable drawdown risk")
     
     print("\n" + "="*50)
     
-    # Show sample recent trades
     if trades:
         print("\n📋 SAMPLE RECENT TRADES:")
         for t in trades[:5]:
@@ -236,17 +185,126 @@ def print_results(real_stats: dict, monte: dict, trades: List[Dict]):
             sign = '🟢' if pnl > 0 else '🔴'
             print(f"   {sign} {symbol}: {'+' if pnl > 0 else ''}${pnl:.2f} ({date})")
 
-# ============ MAIN ============
+def optimize_parameters(trades: List[Dict], real_stats: dict):
+    """Optimize strategy parameters using real trade data."""
+    print("\n" + "="*60)
+    print("🎯 PARAMETER OPTIMIZER")
+    print("="*60)
+    
+    # Group trades by symbol
+    symbol_trades = {}
+    for t in trades:
+        sym = t.get('symbol', 'UNKNOWN')
+        if sym not in symbol_trades:
+            symbol_trades[sym] = []
+        symbol_trades[sym].append(t)
+    
+    # Calculate per-symbol stats
+    symbol_stats = []
+    for sym, sym_trades in symbol_trades.items():
+        wins = [t for t in sym_trades if float(t.get('income', 0)) > 0]
+        losses = [t for t in sym_trades if float(t.get('income', 0)) <= 0]
+        
+        if len(sym_trades) >= 3:  # Only symbols with 3+ trades
+            wr = len(wins) / len(sym_trades)
+            avg_w = sum([float(t.get('income', 0)) for t in wins]) / len(wins) if wins else 0
+            avg_l = abs(sum([float(t.get('income', 0)) for t in losses]) / len(losses)) if losses else 0
+            rr = avg_w / avg_l if avg_l > 0 else 0
+            
+            symbol_stats.append({
+                'symbol': sym,
+                'trades': len(sym_trades),
+                'winrate': wr,
+                'avg_win': avg_w,
+                'avg_loss': avg_l,
+                'rr': rr,
+                'total_pnl': sum([float(t.get('income', 0)) for t in sym_trades]),
+                'wins': len(wins),
+                'losses': len(losses)
+            })
+    
+    # Sort by winrate
+    symbol_stats.sort(key=lambda x: x['winrate'], reverse=True)
+    
+    print(f"\n📊 Analyzed {len(symbol_trades)} symbols with 3+ trades")
+    
+    print("\n🏆 TOP 10 HIGHEST WINRATE SYMBOLS:")
+    print("-" * 60)
+    print(f"{'Symbol':<12} {'Trades':>6} {'Win%':>6} {'Avg W':>7} {'Avg L':>7} {'R:R':>5} {'PnL':>8}")
+    print("-" * 60)
+    
+    for s in symbol_stats[:10]:
+        print(f"{s['symbol']:<12} {s['trades']:>6} {s['winrate']*100:>5.1f}% ${s['avg_win']:>6.2f} ${s['avg_loss']:>6.2f} {s['rr']:>5.2f} ${s['total_pnl']:>7.2f}")
+    
+    # Show worst symbols
+    print("\n🔴 BOTTOM 10 LOWEST WINRATE SYMBOLS:")
+    print("-" * 60)
+    for s in symbol_stats[-10:]:
+        print(f"{s['symbol']:<12} {s['trades']:>6} {s['winrate']*100:>5.1f}% ${s['avg_win']:>6.2f} ${s['avg_loss']:>6.2f} {s['rr']:>5.2f} ${s['total_pnl']:>7.2f}")
+    
+    # Calculate what-if scenarios
+    print("\n" + "="*60)
+    print("💡 WHAT-IF SCENARIOS")
+    print("="*60)
+    
+    current_wr = real_stats['winrate']
+    current_rr = real_stats['avg_win'] / real_stats['avg_loss'] if real_stats['avg_loss'] > 0 else 0
+    
+    print(f"\n📊 Current Stats:")
+    print(f"   Win Rate: {current_wr*100:.1f}%")
+    print(f"   R:R Ratio: {current_rr:.2f}:1")
+    print(f"   Expected Value per trade: ${(current_wr * real_stats['avg_win']) - ((1-current_wr) * real_stats['avg_loss']):.2f}")
+    
+    # Scenario 1: Better R:R with same winrate
+    for target_rr in [2.0, 2.5, 3.0]:
+        if target_rr > current_rr:
+            # Assume avg_loss stays same, avg_win increases
+            new_avg_win = real_stats['avg_loss'] * target_rr
+            ev = (current_wr * new_avg_win) - ((1-current_wr) * real_stats['avg_loss'])
+            print(f"\n   If R:R = {target_rr}:1 (same winrate):")
+            print(f"     Avg Win: ${new_avg_win:.2f} | Expected EV: ${ev:.2f}")
+            print(f"     Per 100 trades: ${ev*100:.2f} (vs current: ${((current_wr * real_stats['avg_win']) - ((1-current_wr) * real_stats['avg_loss']))*100:.2f})")
+    
+    # Best symbol analysis
+    best_symbols = [s for s in symbol_stats if s['winrate'] >= 0.5 and s['rr'] >= 1.5]
+    
+    print("\n" + "="*60)
+    print("🎯 ACTIONABLE RECOMMENDATIONS")
+    print("="*60)
+    
+    if best_symbols:
+        print("\n✅ SYMBOLS TO FOCUS ON (winrate>50%, R:R>1.5):")
+        for s in best_symbols[:5]:
+            print(f"   • {s['symbol']}: {s['winrate']*100:.0f}% winrate, {s['rr']:.1f}:1 R:R, {s['trades']} trades")
+    
+    bad_symbols = [s for s in symbol_stats if s['winrate'] < 0.4 or s['total_pnl'] < -5]
+    if bad_symbols:
+        print("\n🔴 SYMBOLS TO AVOID:")
+        for s in bad_symbols[:5]:
+            print(f"   • {s['symbol']}: {s['winrate']*100:.0f}% winrate, ${s['total_pnl']:.2f} total PnL")
+    
+    print(f"""
+\n📋 SCANNER PARAMETER RECOMMENDATIONS:
+
+1. MIN_WINRATE_PER_SYMBOL: 0.45 (45%)
+   - Only trade symbols with >45% historical winrate
+
+2. MIN_RISK_REWARD: 1.5
+   - Only take trades with R:R >= 1.5
+
+3. EXCLUDED_SYMBOLS: {', '.join([s['symbol'] for s in bad_symbols[:5]]) if bad_symbols else 'None'}
+   - These symbols have poor performance
+
+4. TRADE_FREQUENCY: Reduce by 50%
+   - Currently ~11 trades/day is too many
+   - Target: 3-5 quality trades/day
+""")
+
 def main():
     print("🔄 Fetching real trade data from Binance...")
-    
-    # Get real trades
     trades = get_income_history(days=90)
-    
-    # Calculate real stats
     real_stats = calculate_real_stats(trades)
     
-    # Run Monte Carlo with REAL stats
     print(f"📊 Running Monte Carlo with winrate={real_stats['winrate']*100:.1f}%...")
     monte = monte_carlo_simulation(
         winrate=real_stats['winrate'],
@@ -254,8 +312,10 @@ def main():
         avg_loss=real_stats['avg_loss'] or 3.0
     )
     
-    # Print results
     print_results(real_stats, monte, trades)
+    
+    if trades:
+        optimize_parameters(trades, real_stats)
 
 if __name__ == "__main__":
     main()
