@@ -329,6 +329,18 @@ body::before {
   animation: fadeUp 0.6s ease-out 0.1s both;
 }
 
+.balance-chart-container {
+  position: relative;
+  height: 80px;
+  margin-top: 15px;
+}
+
+.balance-chart-container {
+  position: relative;
+  height: 80px;
+  margin-top: 15px;
+}
+
 .balance-card::before {
   content: '';
   position: absolute;
@@ -1055,6 +1067,9 @@ function toggleLastPos() {
         <div class="circle-progress-text" id="marginText">--%</div>
         <div class="circle-progress-label">MARGIN</div>
       </div>
+    </div>
+    <div class="balance-chart-container">
+      <canvas id="balanceChart"></canvas>
     </div>
   </div>
 
