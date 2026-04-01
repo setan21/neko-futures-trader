@@ -906,12 +906,17 @@ function toggleLastPos() {
   var content = document.getElementById('lastTrade');
   var arrow = document.getElementById('lastPosArrow');
   var svg = arrow.querySelector('svg');
+  
+  // Add ripple effect
+  arrow.classList.add('ripple');
+  setTimeout(function() { arrow.classList.remove('ripple'); }, 500);
+  
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    svg.style.transform = 'rotate(180deg)';
+    svg.style.transform = 'rotate(180deg) scale(1.1)';
   } else {
     content.style.display = 'none';
-    svg.style.transform = 'rotate(0deg)';
+    svg.style.transform = 'rotate(0deg) scale(1)';
   }
 }
 </script>
@@ -1464,12 +1469,17 @@ function toggleLastPos() {
   var content = document.getElementById('lastTrade');
   var arrow = document.getElementById('lastPosArrow');
   var svg = arrow.querySelector('svg');
+  
+  // Add ripple effect
+  arrow.classList.add('ripple');
+  setTimeout(function() { arrow.classList.remove('ripple'); }, 500);
+  
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    svg.style.transform = 'rotate(180deg)';
+    svg.style.transform = 'rotate(180deg) scale(1.1)';
   } else {
     content.style.display = 'none';
-    svg.style.transform = 'rotate(0deg)';
+    svg.style.transform = 'rotate(0deg) scale(1)';
   }
 }
 </script>
