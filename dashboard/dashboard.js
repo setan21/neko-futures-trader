@@ -241,3 +241,29 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => console.log(`🚀 Neko Dashboard on http://localhost:${PORT}`));
 module.exports = server;
+
+// Funding Rate Check
+async function getFundingRates() {
+    try {
+        const data = await binanceGET('/fapi/v1/premiumIndex', '');
+        if (!Array.isArray(data)) return [];
+        
+        // Get funding rates and sort by highest
+        const rates = data
+            .filter(d => parseFloat(d.lastFundingRate) !== 0)
+            .map(d => ({
+                symbol: d.symbol.replace('USDT', ''),
+                fundingRate: parseFloat(d.lastFundingRate) * 100, // Convert to percentage
+                markPrice: parseFloat(d.markPrice),
+                indexPrice: parseFloat(d.indexPrice)
+            }))
+            .filter(d => d.fundingRate > 0.01) // Only > 0.01%
+            .sort((a, b) => b.fundingRate - a.fundingRate)
+            .slice(0, 5); // Top 5
+        
+        return rates;
+    } catch (e) {
+        console.error('Funding rate error:', e.message);
+        return [];
+    }
+}
