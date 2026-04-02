@@ -655,8 +655,8 @@ body::before {
 
 .pos-header {
   display: grid;
-  grid-template-columns: 60px 50px 1fr 65px 65px 58px 58px 55px;
-  padding: 12px 14px;
+  grid-template-columns: 70px 45px 1fr 80px 80px 70px 70px 65px;
+  padding: 12px 12px;
   background: rgba(0, 0, 0, 0.3);
   border-bottom: 1px solid var(--border);
 }
@@ -674,12 +674,13 @@ body::before {
 
 .pos-row {
   display: grid;
-  grid-template-columns: 60px 50px 1fr 65px 65px 58px 58px 55px;
-  padding: 10px 14px;
+  grid-template-columns: 70px 45px 1fr 80px 80px 70px 70px 65px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   transition: var(--transition);
   animation: fadeIn 0.3s ease-out both;
   position: relative;
+  overflow: hidden;
 }
 
 .pos-row:last-child { border-bottom: none; }
@@ -700,6 +701,9 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .pos-cell.sym {
@@ -841,8 +845,8 @@ body.light .status-bar {
   .performer-roi { font-size: 20px; }
   
   .pos-header, .pos-row {
-    grid-template-columns: 42px 38px 1fr 50px 50px 46px 46px 44px;
-    padding: 8px 10px;
+    grid-template-columns: 55px 40px 1fr 65px 65px 58px 58px 55px;
+    padding: 8px 8px;
   }
   
   .status-bar {
