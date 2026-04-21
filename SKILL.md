@@ -38,6 +38,7 @@ neko-futures-trader/
 ├── daily_eval.py              # Daily evaluation
 ├── backtester.py              # Monte Carlo backtesting
 ├── config.py                 # Trading parameters
+├── llm_analyzer.py           # LLM second opinion gate (hybrid AI)
 ├── lib/                      # Helper modules
 │   ├── signal_filter.py
 │   ├── ict_indicators.py
@@ -66,10 +67,11 @@ pip install python-dotenv requests pandas numpy scipy scikit-learn
 
 ### 3. Configure (.env)
 ```bash
-BINANCE_API_KEY=your_key
-BINANCE_SECRET=your_secret
-TELEGRAM_BOT_TOKEN=your_token
+BINANCE_API_KEY=***
+BINANCE_SECRET=***
+TELEGRAM_BOT_TOKEN=***
 TELEGRAM_CHANNEL=your_user_id
+OPENROUTER_API_KEY=sk-or-v1-***  # For LLM analyzer (optional, fail-open if missing)
 ```
 
 ### 4. Workspace Setup
@@ -194,6 +196,48 @@ Access at: `https://YOUR_IP:8443/neko-light.html`
 
 - ❌ Breakout/Breakdown
 - ❌ Pocket Pivot
+
+---
+
+## 🧠 Hybrid AI Gate (LLM Analyzer)
+
+The scanner uses a **hybrid architecture**: rule-based indicators for fast filtering, then an LLM second opinion before execution.
+
+### How it Works
+```
+Scanner (rule-based, 14 indicators) → Score ≥ 6
+        ↓
+  LLM Analyzer (gpt-4o-mini via OpenRouter)
+        ↓
+  [YES] → Execute order with SL/TP
+  [NO]  → Skip signal
+```
+
+### Config (`config.py`)
+```python
+LLM_ENABLED = True              # Toggle on/off
+LLM_MODEL = "openai/gpt-4o-mini"  # Cheap, fast model
+LLM_MIN_SCORE = 6               # Only analyze score ≥ 6
+LLM_TEMPERATURE = 0.1           # Low = deterministic
+LLM_TIMEOUT = 15                # Seconds, then fail-open
+```
+
+### Key Design Decisions
+- **Fail-open**: If LLM is down/timeout/error → trade still executes. No missed trades.
+- **Cache**: 5-min TTL per symbol+direction+score. Repeated signals don't re-call LLM.
+- **Cost**: ~$0.0001/trade with gpt-4o-mini. Basically free.
+- **Prompt**: Asks about momentum alignment, RSI zone, SL reasonableness, red flags.
+- **Telegram**: LLM reasoning included in trade notifications.
+
+### `llm_analyzer.py` Functions
+- `analyze_signal(analysis)` — Main entry. Returns `{approved, reason, confidence, model, latency_ms, tokens_*}`
+- `format_analysis_prompt(analysis)` — Builds concise prompt from indicator dict
+- `call_llm(prompt)` — OpenRouter API call with timeout
+- `parse_llm_response(content)` — JSON parser with markdown fallback
+
+### Requirements
+- `OPENROUTER_API_KEY` in `.env` (optional — fail-open if missing)
+- `pip install requests` (already a dependency)
 
 ---
 

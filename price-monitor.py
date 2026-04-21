@@ -80,6 +80,35 @@ def should_move_sl_to_breakeven(entry, current, sl, side, profit_threshold=1.0):
             return entry
     return None
 
+def should_trail_sl(entry, current, sl, side, profit_threshold=5.0, trail_distance=2.0, lock_profit=2.0):
+    """
+    Trailing SL that locks in profit.
+    When profit > profit_threshold%:
+      - SL = max(entry + lock_profit%, current - trail_distance%)
+      - Never moves SL down, only up
+    """
+    if side == 'LONG':
+        profit_pct = ((current - entry) / entry) * 100
+        if profit_pct >= profit_threshold:
+            # Minimum lock: entry + lock_profit%
+            lock_sl = entry * (1 + lock_profit / 100)
+            # Trailing: current - trail_distance%
+            trail_sl = current * (1 - trail_distance / 100)
+            # Use the higher of the two
+            new_sl = max(lock_sl, trail_sl)
+            # Only move SL up, never down
+            if new_sl > sl:
+                return new_sl
+    else:
+        profit_pct = ((entry - current) / entry) * 100
+        if profit_pct >= profit_threshold:
+            lock_sl = entry * (1 - lock_profit / 100)
+            trail_sl = current * (1 + trail_distance / 100)
+            new_sl = min(lock_sl, trail_sl)
+            if new_sl < sl:
+                return new_sl
+    return None
+
 def should_activate_trailing_tp(entry, current, tp, side, trail_percent=1.5):
     """Activate trailing TP when profit > trail_percent%"""
     if side == 'LONG':
@@ -261,7 +290,7 @@ def notify_trade(notification_type, data):
 💰 PnL: ${data['pnl']:.2f}"""
     
     elif notification_type == 'breakeven':
-        msg = f"""🛡 *STOP LOSS MOVED TO BREAKEVEN*
+        msg = f"""🛡 *TRAILING STOP LOSS*
 
 🔖 Symbol: {data['symbol']}
 💵 Entry: ${data['entry']:.6f}
@@ -497,16 +526,28 @@ def main():
                         add_to_recently_closed(symbol)
                     continue
                 
-                # Aggressive breakeven - move SL to entry when in profit
+                # Trailing SL - lock profit when in profit
                 try:
                     be_thresh = MIN_PROFIT_BREAKEVEN if 'MIN_PROFIT_BREAKEVEN' in dir() else 5.0
+                    trail_dist = TRAIL_SL_DISTANCE if 'TRAIL_SL_DISTANCE' in dir() else 2.0
+                    lock_pct = TRAIL_SL_LOCK if 'TRAIL_SL_LOCK' in dir() else 2.0
                 except:
                     be_thresh = 5.0
-                new_breakeven_sl = should_move_sl_to_breakeven(entry, current, sl_price, side, profit_threshold=be_thresh)
-                if new_breakeven_sl and new_breakeven_sl != sl_price:
-                    print(f"    🛡 Breakeven: {sl_price:.6f} -> {new_breakeven_sl:.6f}")
-                    update_sl_to_breakeven(symbol, side, new_breakeven_sl)
-                    sl_price = new_breakeven_sl
+                    trail_dist = 2.0
+                    lock_pct = 2.0
+                new_trail_sl = should_trail_sl(entry, current, sl_price, side, 
+                    profit_threshold=be_thresh, trail_distance=trail_dist, lock_profit=lock_pct)
+                if new_trail_sl and new_trail_sl != sl_price:
+                    profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
+                    print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
+                    update_sl_to_breakeven(symbol, side, new_trail_sl)
+                    send_notification('breakeven', {
+                        'symbol': symbol,
+                        'entry': entry,
+                        'sl': new_trail_sl,
+                        'profit_pct': profit_now
+                    })
+                    sl_price = new_trail_sl
                 else:
                     # Calculate SL/TP from ATR (template formula)
                     atr = get_atr(symbol)
@@ -604,16 +645,28 @@ def main():
                         add_to_recently_closed(symbol)
                     continue
                 
-                # Aggressive breakeven - move SL to entry when in profit
+                # Trailing SL - lock profit when in profit
                 try:
                     be_thresh = MIN_PROFIT_BREAKEVEN if 'MIN_PROFIT_BREAKEVEN' in dir() else 5.0
+                    trail_dist = TRAIL_SL_DISTANCE if 'TRAIL_SL_DISTANCE' in dir() else 2.0
+                    lock_pct = TRAIL_SL_LOCK if 'TRAIL_SL_LOCK' in dir() else 2.0
                 except:
                     be_thresh = 5.0
-                new_breakeven_sl = should_move_sl_to_breakeven(entry, current, sl_price, side, profit_threshold=be_thresh)
-                if new_breakeven_sl and new_breakeven_sl != sl_price:
-                    print(f"    🛡 Breakeven: {sl_price:.6f} -> {new_breakeven_sl:.6f}")
-                    update_sl_to_breakeven(symbol, side, new_breakeven_sl)
-                    sl_price = new_breakeven_sl
+                    trail_dist = 2.0
+                    lock_pct = 2.0
+                new_trail_sl = should_trail_sl(entry, current, sl_price, side, 
+                    profit_threshold=be_thresh, trail_distance=trail_dist, lock_profit=lock_pct)
+                if new_trail_sl and new_trail_sl != sl_price:
+                    profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
+                    print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
+                    update_sl_to_breakeven(symbol, side, new_trail_sl)
+                    send_notification('breakeven', {
+                        'symbol': symbol,
+                        'entry': entry,
+                        'sl': new_trail_sl,
+                        'profit_pct': profit_now
+                    })
+                    sl_price = new_trail_sl
                 
                 # Check if SL/TP hit
                 hit = None

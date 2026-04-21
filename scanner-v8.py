@@ -13,6 +13,14 @@ import requests
 from datetime import datetime
 from signal_filter import filter_signal
 
+# Import LLM analyzer (hybrid AI gate)
+try:
+    import llm_analyzer
+    LLM_ANALYZER_AVAILABLE = True
+except ImportError:
+    LLM_ANALYZER_AVAILABLE = False
+    print("Warning: llm_analyzer module not available")
+
 # === LOAD FROM ENV FILE ===
 
 # Import advanced modules
@@ -41,6 +49,20 @@ try:
     from config import *
 except ImportError:
     pass
+
+# Default SLEEP_MODE if not defined
+try:
+    SLEEP_MODE
+except NameError:
+    SLEEP_MODE = False
+try:
+    MIN_SCORE_SLEEP
+except NameError:
+    MIN_SCORE_SLEEP = 7
+try:
+    MIN_SCORE_NORMAL
+except NameError:
+    MIN_SCORE_NORMAL = 4
 
 # Load delisting blocklist
 try:
@@ -229,6 +251,16 @@ def get_mark_price(symbol):
         r = requests.get(url, timeout=10)
         data = r.json()
         return float(data.get('markPrice', 0))
+    except:
+        return 0
+
+def get_funding_rate(symbol):
+    """Get current funding rate for a symbol"""
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}'
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return float(data.get('lastFundingRate', 0)) * 100  # Convert to percentage
     except:
         return 0
 
@@ -908,45 +940,113 @@ def analyze_symbol(symbol, stats):
     # 14. Extra Volume Score (5x+ avg - extra bonus)
     extra_vol_score = 1 if vol_ratio > 5 else 0  # Reduced
     
-    # Runner score - updated with new setups
-    runner_score = 0
+    # === NEW LONG/SHORT STRATEGY v1.0.40 ===
     
-    # Volume - REDUCED (was too aggressive, caused false signals)
-    if vol_ratio > 5: runner_score += 1  # 5x+ only
-    elif vol_ratio > 3: runner_score += 1
+    # Calculate additional EMAs
+    ema_9 = calc_ema(closes, 9)
+    ema_21 = calc_ema(closes, 21)
+    ema_50 = calc_ema(closes, 50)
+    sma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else sum(closes) / len(closes)
     
-    # Price changes
-    if price_change > 10: runner_score += 2
-    elif price_change > 5: runner_score += 1
-    if abs(change_1h) > 3: runner_score += 1
+    # BB middle band
+    bb_sma_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else sum(closes) / len(closes)
     
-    # Breakout/Breakdown - REMOVED (poor accuracy)
-    pass
+    # Funding rate
+    funding_rate = get_funding_rate(symbol)
     
-    # OI
-    if oi_change > 20: runner_score += 2
-    elif oi_change > 10: runner_score += 1
+    # MACD values
+    macd_line, signal_line, histogram = calc_macd(closes)
     
-    # New setups scoring
-    if weekly_change > 20: runner_score += 2  # Weekly 20%+ (max +2, reduced from +3)
-    elif weekly_change > 10: runner_score += 1
-    elif weekly_change > 3: runner_score += 1
+    # Determine direction from price_change
+    if price_change > 0:
+        direction = "LONG"
+    else:
+        direction = "SHORT"
     
-    # Pocket Pivot - REMOVED (poor accuracy)
-    pass
-    if trend_base: runner_score += 1
-    if 0 <= ema_position <= 100 and ema_position < 50: runner_score += 1  # Price near 21EMA
+    # === LONG SCORING ===
+    long_score = 0
+    if direction == "LONG":
+        # Volume Spike: +1 (>3x avg)
+        if vol_ratio >= 3: long_score += 1
+        # Price Change: +1-2 (>5%=+1, >10%=+2)
+        if price_change > 10: long_score += 2
+        elif price_change > 5: long_score += 1
+        # OI Change: +1 (>10%)
+        if oi_change > 10: long_score += 1
+        # Weekly Change: +1-2 (>10%=+1, >20%=+2)
+        if weekly_change > 20: long_score += 2
+        elif weekly_change > 10: long_score += 1
+        # Trend Base: +1 (Price>50SMA AND 10WMA>30WMA)
+        wma_10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else closes[-1]
+        wma_30 = sum(closes[-30:]) / 30 if len(closes) >= 30 else closes[-1]
+        if current > sma_50 and wma_10 > wma_30: long_score += 1
+        # EMA Position: +1 (<50)
+        if 0 <= ema_position <= 100 and ema_position < 50: long_score += 1
+        # RSI Signal: +1 (oversold <30)
+        if rsi_14 < 30: long_score += 1
+        # Price > VWAP: +1
+        if current > vwap: long_score += 1
+        # Price > EMA9: +1
+        if ema_9 and current > ema_9: long_score += 1
+        # VWAP + EMA9 Bonus: +1 (both conditions met)
+        if current > vwap and (ema_9 and current > ema_9): long_score += 1
+        # Market Guard: +1 (funding rate OK, <0.05%)
+        if abs(funding_rate) < 0.05: long_score += 1
+        # Bollinger Squeeze: +1
+        if squeeze > 0: long_score += 1
+        
+        runner_score = long_score
     
-    # NEW INDICATORS v1.0.29
-    if rsi_signal: runner_score += 1  # RSI <30 or >70
-    if extra_vol_score > 0: runner_score += extra_vol_score  # Volume 5x+ (extra +2)
+    # === SHORT SCORING ===
+    short_score = 0
+    if direction == "SHORT":
+        # EMA Bearish: +2 (EMA9 < EMA21)
+        if ema_9 and ema_21 and ema_9 < ema_21: short_score += 2
+        # Price < EMAs: +1 (below EMA9 AND EMA21)
+        if ema_9 and ema_21 and current < ema_9 and current < ema_21: short_score += 1
+        # RSI Bearish: +1 (RSI < 50)
+        if rsi_14 < 50: short_score += 1
+        # MACD Bearish: +2 (Histogram <0 AND declining)
+        macd_hist_prev = 0
+        if len(closes) >= 35:
+            ema_12_prev = calc_ema(closes[-27:-1], 12)
+            ema_26_prev = calc_ema(closes[-27:-1], 26)
+            macd_prev = (ema_12_prev - ema_26_prev) if (ema_12_prev and ema_26_prev) else 0
+            signal_prev = calc_ema([macd_prev] * 9, 9) if macd_prev else 0
+            macd_hist_prev = macd_prev - signal_prev if signal_prev else 0
+        if histogram is not None and histogram < 0 and macd_hist_prev > histogram: short_score += 2
+        # 4H Downtrend: +2 (4H down >2%)
+        if price_change < -2: short_score += 2
+        elif change_1h < 0: short_score += 1  # 1H red
+        # Below BB Mid: +1 (Price below BB middle band)
+        if current < bb_sma_20: short_score += 1
+        # Volume Spike: +1 (>1.5x)
+        if vol_ratio > 1.5: short_score += 1
+        # ATR Rising: +1 (volatility increasing)
+        if squeeze < 0: short_score += 1
+        # Price < VWAP: +1
+        if current < vwap: short_score += 1
+        # Price < EMA9: +1
+        if ema_9 and current < ema_9: short_score += 1
+        # VWAP + EMA9 Bonus: +1 (both conditions met)
+        if current < vwap and (ema_9 and current < ema_9): short_score += 1
+        
+        runner_score = short_score
+    
+    # Sleep mode check - use appropriate MIN_SCORE
+    if SLEEP_MODE:
+        min_score = MIN_SCORE_SLEEP
+    else:
+        min_score = MIN_SCORE_NORMAL
     
     # Must have at least MIN_SCORE
-    if runner_score < MIN_SCORE:
+    if runner_score < min_score:
+        print(f"(score={runner_score}/{min_score})", end=" ", flush=True)
         return None
     
     # Must have significant change for signal (either direction)
     if abs(price_change) < 3:
+        print(f"(ch={price_change:.1f}%)", end=" ", flush=True)
         return None
     
     # Debug: log score breakdown for analysis
@@ -957,27 +1057,23 @@ def analyze_symbol(symbol, stats):
         'oi': oi_change,
         'ema': ema_position,
         'rsi': rsi_14,
-        'score': runner_score
+        'score': runner_score,
+        'funding': funding_rate,
+        'sleep_mode': SLEEP_MODE
     }
     
-    # Direction - Detect LONG or SHORT (MUST BE FIRST)
-    if price_change > 0:
-        direction = "LONG"
-    else:
-        direction = "SHORT"
-    
+    # === DIRECTION FILTERS ===
     # EMA Filter - for LONG, price should be near or below 21EMA (not extended)
-    # ema_position > 80 means price is extended above ATR bands
     if direction == "LONG" and ema_position > 85:
         # Price too extended above ATR bands, likely a chase
+        print(f"(ema_pos={ema_position:.0f}>85)", end=" ", flush=True)
         return None
     if direction == "SHORT" and ema_position < 15:
         # Price too extended below ATR bands for shorts
+        print(f"(ema_pos={ema_position:.0f}<15)", end=" ", flush=True)
         return None
     
     # EMAs
-    ema_21 = calc_ema(closes, 21)
-    ema_50 = calc_ema(closes, 50)
     if not ema_21 or not ema_50:
         return None
     
@@ -985,18 +1081,29 @@ def analyze_symbol(symbol, stats):
     atr = calc_atr(candles, 14) or (current * 0.02)
     atr_pct = (atr / current * 100) if current > 0 else 0
     
-    # RSI Signal - just log, don't reject (research shows RSI alone is not reliable)
+    # RSI Signal
     rsi_signal = "OB" if rsi_14 > 70 else "OS" if rsi_14 < 30 else "Neutral"
 
     # MACD Histogram Filter - confirm momentum direction
-    macd_line, signal_line, histogram = calc_macd(closes)
     if histogram is not None:
         if direction == "LONG" and histogram < 0:
             # MACD bearish - reject LONG
+            print(f"(hist={histogram:.4f}<0)", end=" ", flush=True)
             return None
         if direction == "SHORT" and histogram > 0:
             # MACD bullish - reject SHORT
+            print(f"(hist={histogram:.4f}>0)", end=" ", flush=True)
             return None
+    
+    # SHORT Filter: RSI > 30 (no short oversold)
+    if direction == "SHORT" and rsi_14 <= 30:
+        print(f"(rsi={rsi_14:.0f}<=30)", end=" ", flush=True)
+        return None
+    
+    # SHORT Filter: EMA position > 15 (no chase down)
+    if direction == "SHORT" and ema_position <= 15:
+        print(f"(ema_pos={ema_position:.0f}<=15)", end=" ", flush=True)
+        return None
     
     # Calculate divergence for signal quality
     divergence = detect_divergence(closes)
@@ -1408,7 +1515,7 @@ def main():
             print(f"  Skipping {symbol} - recently closed")
             continue
         
-        print(f"  Checking {symbol} ({change:.1f}%)...", end=" ")
+        print(f"  Checking {symbol} ({change:.1f}%)...", end=" ", flush=True)
         
         try:
             analysis = analyze_symbol(symbol, stats)
@@ -1419,7 +1526,18 @@ def main():
                 oi_ch = analysis.get("oi_change", 0)
                 vol_r = analysis.get("vol_ratio", 1)
                 print(f"      → indicators: MACD={macd_h:+.4f} squeeze={squeeze} OI={oi_ch:+.1f}% vol={vol_r:.1f}x")
-                
+
+                # === LLM GATE: AI Second Opinion ===
+                llm_result = None
+                if LLM_ANALYZER_AVAILABLE:
+                    llm_result = llm_analyzer.analyze_signal(analysis)
+                    if not llm_result['approved']:
+                        print(f"  🧠 LLM REJECTED: {llm_result['reason']}")
+                        continue  # Skip this signal
+                    else:
+                        reason_short = llm_result['reason'][:60]
+                        print(f"  🧠 LLM APPROVED: {reason_short} ({llm_result.get('latency_ms', 0)}ms)")
+
                 # Calculate quantity with proper floor (not int truncation)
                 trade_amount = (balance * ENTRY_PERCENT / 100) * LEVERAGE
                 
@@ -1487,6 +1605,12 @@ def main():
                         print(f"  (already posted)")
                     else:
                         msg = format_signal(analysis, stats)
+                        # Add LLM insight if available
+                        if llm_result and llm_result.get('reason'):
+                                msg += f"\n🧠 AI Check: {llm_result['reason'][:80]}\n"
+                                model_name = llm_result.get('model') or 'N/A'
+                                conf = llm_result.get('confidence', 0)
+                                msg += f"📊 Model: {model_name} | Conf: {conf:.0%}\n"
                         msg += f"\n✅ ORDER EXECUTED: {analysis['direction']}\n"
                         msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
                         msg += f"📈 TP: ${analysis['tp1']:.6f}\n"
