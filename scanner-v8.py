@@ -894,6 +894,7 @@ def analyze_symbol(symbol, stats):
     rsi_14 = calc_rsi(closes, 14)
     # RSI-based filter: reject bad entries
     squeeze = 0  # Initialize early to avoid "not defined" errors
+    ema_50 = None  # Initialize early to avoid "not defined" errors
     rsi_oversold = rsi_14 < 30
     rsi_overbought = rsi_14 > 70
     rsi_signal = rsi_oversold or rsi_overbought
@@ -942,10 +943,15 @@ def analyze_symbol(symbol, stats):
     
     # === NEW LONG/SHORT STRATEGY v1.0.40 ===
     
-    # Calculate additional EMAs
-    ema_9 = calc_ema(closes, 9)
-    ema_21 = calc_ema(closes, 21)
-    ema_50 = calc_ema(closes, 50)
+    # Calculate additional EMAs (with fallback for edge cases)
+    ema_9 = None
+    ema_21 = None
+    try:
+        ema_9 = calc_ema(closes, 9)
+        ema_21 = calc_ema(closes, 21)
+        ema_50 = calc_ema(closes, 50)
+    except Exception as e:
+        print(f"  EMA calc error: {e}")
     sma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else sum(closes) / len(closes)
     
     # BB middle band
