@@ -17,23 +17,10 @@ MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 MIN_SCORE_NORMAL = 4             # Min score to enter in NORMAL mode
 
 # ── SL/TP STRATEGY ────────────────────────────────────────────────────────────
-# PRIMARY: ATR-based (adapts to token volatility)
-# FALLBACK: Uses PRICE_TP/PRICE_SL when ATR is too tight or too wide
+# Percentage-based: PRICE_SL / PRICE_TP
 
-# ATR Multipliers (R:R 1:4)
-ATR_HIGH_VOLATILITY = 3.0       # ATR > X% = high volatility token
-ATR_MULTIPLIER_SL_HIGH = 2.0     # SL for volatile tokens (2x ATR)
-ATR_MULTIPLIER_TP_HIGH = 8.0     # TP for volatile tokens (8x ATR)
-ATR_MULTIPLIER_SL_NORMAL = 2.0   # Normal SL multiplier
-ATR_MULTIPLIER_TP_NORMAL = 8.0   # Normal TP multiplier
-ATR_MULTIPLIER_SL_LOW = 1.5     # Tighter SL for stable tokens
-ATR_MULTIPLIER_TP_LOW = 6.0     # Tighter TP for stable tokens
-
-# PRICE FALLBACK (when ATR-based SL would be too tight/wide)
 PRICE_TP = 15.0                 # Take Profit: +15% for LONG, -15% for SHORT
 PRICE_SL = 5.0                  # Stop Loss: -5% for LONG, +5% for SHORT
-PRICE_FALLBACK_MAX_ATR = 10.0    # If ATR% > 10%, use PRICE_TP/PRICE_SL instead
-PRICE_FALLBACK_MIN_ATR = 1.0    # If ATR% < 1%, use PRICE_TP/PRICE_SL instead
 
 # ── BREAKEVEN & TRAILING ─────────────────────────────────────────────────────
 MIN_PROFIT_BREAKEVEN = 5.0       # % profit to start trailing SL

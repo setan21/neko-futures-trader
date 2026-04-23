@@ -71,32 +71,6 @@ try:
 except ImportError:
     DELISTING_CHECK = False
 
-# Default ATR multipliers if not loaded from config
-try:
-    ATR_MULTIPLIER_SL_HIGH
-except NameError:
-    ATR_MULTIPLIER_SL_HIGH = 2.0
-try:
-    ATR_MULTIPLIER_TP_HIGH
-except NameError:
-    ATR_MULTIPLIER_TP_HIGH = 8.0  # 8x ATR for 1:4 ratio
-try:
-    ATR_MULTIPLIER_SL_NORMAL
-except NameError:
-    ATR_MULTIPLIER_SL_NORMAL = 2.0  # Match SL to HIGH
-try:
-    ATR_MULTIPLIER_TP_NORMAL
-except NameError:
-    ATR_MULTIPLIER_TP_NORMAL = 8.0  # 8x ATR for 1:4 ratio
-try:
-    ATR_MULTIPLIER_SL_LOW
-except NameError:
-    ATR_MULTIPLIER_SL_LOW = 1.0
-try:
-    ATR_MULTIPLIER_TP_LOW
-except NameError:
-    ATR_MULTIPLIER_TP_LOW = 6.0  # 6x ATR for 1:4 ratio
-
 # === CONFIG ===
 API_KEY = os.environ.get('BINANCE_API_KEY', '')
 SECRET = os.environ.get('BINANCE_SECRET', '')
@@ -1136,33 +1110,15 @@ def analyze_symbol(symbol, stats):
         # Don't SHORT when RSI oversold (<30) - too risky  
         return None
     
-    if atr_pct >= PRICE_FALLBACK_MIN_ATR and atr_pct <= PRICE_FALLBACK_MAX_ATR:
-        # ATR-based SL/TP (anti-fakeout: wider multipliers)
-        if atr_pct > ATR_HIGH_VOLATILITY:
-            atr_mult_sl = ATR_MULTIPLIER_SL_HIGH
-            atr_mult_tp = ATR_MULTIPLIER_TP_HIGH
-        else:
-            atr_mult_sl = ATR_MULTIPLIER_SL_NORMAL
-            atr_mult_tp = ATR_MULTIPLIER_TP_NORMAL
-        
-        if direction == "LONG":
-            sl = current - (atr * atr_mult_sl)
-            tp1 = current + (atr * atr_mult_tp)
-        else:
-            sl = current + (atr * atr_mult_sl)
-            tp1 = current - (atr * atr_mult_tp)
-        tp2 = None
-        sl_method = "ATR"
+    # SL/TP based on percentage (PRICE_SL / PRICE_TP)
+    if direction == "LONG":
+        sl = current * (1 - PRICE_SL / 100)
+        tp1 = current * (1 + PRICE_TP / 100)
     else:
-        # Fallback to PRICE_TP/PRICE_SL (too tight or too wide)
-        if direction == "LONG":
-            sl = current * (1 - PRICE_SL / 100)
-            tp1 = current * (1 + PRICE_TP / 100)
-        else:
-            sl = current * (1 + PRICE_SL / 100)
-            tp1 = current * (1 - PRICE_TP / 100)
-        tp2 = None
-        sl_method = "PRICE"
+        sl = current * (1 + PRICE_SL / 100)
+        tp1 = current * (1 - PRICE_TP / 100)
+    tp2 = None
+    sl_method = "PRICE"
     
     # Trend
     trend = "BULLISH" if current > ema_50 else "BEARISH"
