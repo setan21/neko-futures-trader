@@ -756,6 +756,45 @@ def get_order_book_imbalance(symbol, limit=20):
         return {'ratio': 1.0, 'bid_vol': 0, 'ask_vol': 0}
 
 
+def get_taker_ratio(symbol, period='1h', limit=10):
+    """Get Taker Buy/Sell Volume Ratio from Binance Futures.
+    
+    GET /fapi/v1/takerlongshortRatio
+    Returns actual executed volume (market orders), not just resting orders.
+    
+    Returns:
+        dict: {'ratio': buy_vol/sell_vol, 'buy_vol': float, 'sell_vol': float, 'trend': str}
+        ratio > 1 = more buyers executing (bullish), < 1 = more sellers (bearish)
+        trend: 'increasing' | 'decreasing' | 'neutral'
+    """
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/takerlongshortRatio?symbol={symbol}&period={period}&limit={limit}'
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        
+        if not data or len(data) == 0:
+            return {'ratio': 1.0, 'buy_vol': 0, 'sell_vol': 0, 'trend': 'neutral'}
+        
+        # Latest data point
+        latest = data[-1]
+        buy_vol = float(latest.get('buyVol', 0))
+        sell_vol = float(latest.get('sellVol', 0))
+        ratio = float(latest.get('buySellRatio', 1.0))
+        
+        # Trend: compare latest vs earlier
+        trend = 'neutral'
+        if len(data) >= 3:
+            prev_ratio = float(data[-3].get('buySellRatio', 1.0))
+            if ratio > prev_ratio * 1.05:  # 5% increase
+                trend = 'increasing'
+            elif ratio < prev_ratio * 0.95:  # 5% decrease
+                trend = 'decreasing'
+        
+        return {'ratio': ratio, 'buy_vol': buy_vol, 'sell_vol': sell_vol, 'trend': trend}
+    except Exception as e:
+        return {'ratio': 1.0, 'buy_vol': 0, 'sell_vol': 0, 'trend': 'neutral'}
+
+
 def detect_divergence(prices, period=14):
     """Detect RSI/MACD divergence.
     
@@ -1056,8 +1095,8 @@ def analyze_symbol(symbol, stats):
     plus_di = adx_data['plus_di']
     minus_di = adx_data['minus_di']
     
-    # Order Book Imbalance (CVD-lite) - call only if we have enough score to bother
-    ob_imbalance = {'ratio': 1.0, 'bid_vol': 0, 'ask_vol': 0}
+    # Taker Buy/Sell Volume Ratio - fetched after filters pass
+    taker = {'ratio': 1.0, 'buy_vol': 0, 'sell_vol': 0, 'trend': 'neutral'}
     # RSI-based filter: reject bad entries
     squeeze = 0  # Initialize early to avoid "not defined" errors
     ema_50 = None  # Initialize early to avoid "not defined" errors
@@ -1266,8 +1305,8 @@ def analyze_symbol(symbol, stats):
         print(f"(adx={adx_value:.0f}<20)", end=" ", flush=True)
         return None
     
-    # Order Book Imbalance - fetch only after all other filters pass (rate-limit friendly)
-    ob_imbalance = get_order_book_imbalance(symbol, limit=20)
+    # Taker Buy/Sell Volume Ratio - fetch only after all other filters pass
+    taker = get_taker_ratio(symbol, period='1h', limit=10)
     
     # EMAs
     if not ema_21 or not ema_50:
@@ -1322,6 +1361,11 @@ def analyze_symbol(symbol, stats):
     squeeze = calc_bollinger_squeeze(closes)
     if squeeze > 0:
         runner_score += 1  # Squeeze is good for volatility breakout
+    # Taker Buy/Sell Volume bonus: +1 for confirming direction
+    if direction == "LONG" and taker['ratio'] > 1.05:
+        runner_score += 1  # More buyers executing
+    elif direction == "SHORT" and taker['ratio'] < 0.95:
+        runner_score += 1  # More sellers executing
     if direction == "SHORT" and rsi_oversold:
         # Don't SHORT when RSI oversold (<30) - too risky  
         return None
@@ -1418,7 +1462,8 @@ def analyze_symbol(symbol, stats):
         'adx': adx_value,
         'plus_di': plus_di,
         'minus_di': minus_di,
-        'ob_ratio': ob_imbalance['ratio'],
+        'taker_ratio': taker['ratio'],
+        'taker_trend': taker['trend'],
     }
 
 def fetch_brave_news(query, count=2):
@@ -1567,7 +1612,7 @@ def format_signal(analysis, stats):
 • Volume 5x+: {'🔥 Yes' if s.get('vol_ratio', 0) > 5 else '❌ No'}
 • Breakout: {'✅ Yes' if s.get('breakout') else '❌ No'}
 • Filter: {'✅ PASSED' if filter_signal(s.get('symbol',''), s)[0] else '❌ REJECTED'}
-• Score: {s.get('runner_score', 0)}/16
+• Score: {s.get('runner_score', 0)}/17
 
 🆕 PHASE 1 INDICATORS:
 • Divergence: {s.get('divergence', 'NONE')}
@@ -1578,7 +1623,7 @@ def format_signal(analysis, stats):
 • ADX: {s.get('adx', 0):.1f} {'📈 Trend' if s.get('adx', 0) > 25 else '⚠️ Weak'}
 • +DI/-DI: {s.get('plus_di', 0):.1f} / {s.get('minus_di', 0):.1f}
 • StochRSI: %K={s.get('stoch_rsi_k', 50):.1f} %D={s.get('stoch_rsi_d', 50):.1f}
-• OB Ratio: {s.get('ob_ratio', 1.0):.2f} {'🟢 Bid Heavy' if s.get('ob_ratio', 1.0) > 1.2 else '🔴 Ask Heavy' if s.get('ob_ratio', 1.0) < 0.8 else '⚪ Neutral'}
+• OB Ratio: {s.get('taker_ratio', 1.0):.2f} {'🟢 Bullish' if s.get('taker_ratio', 1.0) > 1.05 else '🔴 Bearish' if s.get('taker_ratio', 1.0) < 0.95 else '⚪ Neutral'} ({s.get('taker_trend', 'neutral')})
 
 ⏱️ COOLDOWN: 2h after SL
 • Support: {s['support']:.6f}
@@ -1588,7 +1633,7 @@ def format_signal(analysis, stats):
 • 1H Momentum: {s.get('change_1h', 0):+.1f}%
 • Volume Spike: {s.get('vol_ratio', 1):.1f}x
 • Breakout: {'✅ Yes' if s.get('breakout') else '❌ No'}
-• Score: {s.get('runner_score', 0)}/16 🚀
+• Score: {s.get('runner_score', 0)}/17 🚀
 
 💡 INSIGHT: {s['direction']} | {s['structure']} | RSI: {s['rsi']:.1f}
 🎯 Entry: ${s['current']:.6f}
