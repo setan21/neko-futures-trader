@@ -419,6 +419,55 @@ def place_order(symbol, side, quantity):
     r = requests.post(url, headers=headers, timeout=15)
     return r.json()
 
+
+def place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, entry_price):
+    """Place LIMIT order. SL/TP placed after fill (monitored by price-monitor).
+    
+    Scanner places the limit order and moves on. Price-monitor checks
+    fill status and places SL/TP when filled. Cancels after 5min if unfilled.
+    """
+    headers = {'X-MBX-APIKEY': API_KEY}
+    ts = int(time.time() * 1000)
+    
+    # Round to tick size
+    try:
+        info_r = requests.get('https://fapi.binance.com/fapi/v1/exchangeInfo', timeout=10)
+        tick_size = 0.00001
+        for s in info_r.json().get('symbols', []):
+            if s['symbol'] == symbol:
+                for f in s.get('filters', []):
+                    if f.get('filterType') == 'PRICE_FILTER':
+                        tick_size = float(f.get('tickSize', 0.00001))
+                break
+    except:
+        tick_size = 0.00001
+    
+    def round_to_tick(price, tick):
+        tick_str = f"{tick:.10f}".rstrip('0')
+        decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
+        return float(f"{price:.{decimals}f}")
+    
+    entry_rounded = round_to_tick(entry_price, tick_size)
+    
+    # Place LIMIT order (GTC)
+    params = "symbol={}&side={}&type=LIMIT&timeInForce=GTC&quantity={}&price={}&timestamp={}".format(
+        symbol, side, quantity, entry_rounded, ts)
+    sig = get_signature(params)
+    url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(params, sig)
+    r = requests.post(url, headers=headers, timeout=15)
+    result = r.json()
+    
+    order_id = result.get('orderId')
+    if order_id:
+        print(f"  📋 Limit order placed: {entry_rounded} (ID: {order_id})")
+        result['limit_price'] = entry_rounded
+        result['limit_order_id'] = order_id
+        result['limit_placed_at'] = ts
+    else:
+        print(f"  ⚠️ Limit order failed: {result.get('msg', 'unknown')}")
+    
+    return result
+
 def set_leverage(symbol, lev=LEVERAGE):
     ts = int(time.time() * 1000)
     params = "symbol={}&leverage={}&timestamp={}".format(symbol, lev, ts)
@@ -1853,14 +1902,24 @@ def main():
                 sl_price = analysis.get('sl')
                 tp_price = analysis.get('tp1')
                 
-                # Place order with SL/TP
-                result = place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price)
+                # Calculate pullback entry price (limit order)
+                # For LONG: 1% below current (wait for pullback)
+                # For SHORT: 1% above current (wait for bounce)
+                current_price = analysis['current']
+                if analysis['direction'] == "LONG":
+                    entry_price = current_price * 0.99  # 1% below
+                else:
+                    entry_price = current_price * 1.01  # 1% above
+                
+                # Place LIMIT order with SL/TP
+                result = place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, entry_price)
                 
                 order_id = result.get('orderId', 'N/A')
+                limit_order_id = result.get('limit_order_id')
                 status = result.get('status', 'UNKNOWN')
                 
-                # Only post if order succeeded (has valid orderId)
-                if order_id and order_id != 'N/A':
+                # Only post if limit order succeeded
+                if limit_order_id:
                     if symbol in posted:
                         print(f"  (already posted)")
                     else:
@@ -1871,10 +1930,11 @@ def main():
                                 model_name = llm_result.get('model') or 'N/A'
                                 conf = llm_result.get('confidence', 0)
                                 msg += f"📊 Model: {model_name} | Conf: {conf:.0%}\n"
-                        msg += f"\n✅ ORDER EXECUTED: {analysis['direction']}\n"
+                        msg += f"\n✅ ORDER PLACED: {analysis['direction']} (LIMIT)\n"
+                        msg += f"🎯 Entry: ${entry_price:.6f} (pullback 1%)\n"
                         msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
                         msg += f"📈 TP: ${analysis['tp1']:.6f}\n"
-                        msg += f"📋 Order ID: {order_id} | Status: {status}"
+                        msg += f"📋 Limit ID: {limit_order_id} | Status: NEW"
                         
                         send_telegram(msg)
                         print(f"  Order: {order_id} | Posted to Telegram")
@@ -1887,11 +1947,14 @@ def main():
                                 with open(positions_file, 'r') as f:
                                     positions_data = json.load(f)
                             positions_data[symbol] = {
-                                'entry': analysis['current'],
+                                'entry': entry_price,  # Limit order price
                                 'sl': analysis['sl'],
                                 'tp1': analysis['tp1'],
                                 'side': side,
-                                'opened_at': datetime.now().isoformat()
+                                'opened_at': datetime.now().isoformat(),
+                                'limit_order_id': limit_order_id,
+                                'limit_status': 'PENDING',
+                                'limit_placed_at': int(time.time() * 1000),
                             }
                             with open(positions_file, 'w') as f:
                                 json.dump(positions_data, f)

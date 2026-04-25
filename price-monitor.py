@@ -266,6 +266,63 @@ def cancel_algo_orders(symbol):
         print(f"  ⚠️ Cancel algo orders error for {symbol}: {e}")
         return False
 
+def place_sl_tp_only(symbol, side, quantity, sl_price, tp_price):
+    """Place SL and TP algo orders after a limit order is filled."""
+    headers = {'X-MBX-APIKEY': API_KEY}
+    
+    # Get tick size for rounding
+    try:
+        info_r = requests.get('https://fapi.binance.com/fapi/v1/exchangeInfo', timeout=10)
+        tick_size = 0.00001
+        for s in info_r.json().get('symbols', []):
+            if s['symbol'] == symbol:
+                for f in s.get('filters', []):
+                    if f.get('filterType') == 'PRICE_FILTER':
+                        tick_size = float(f.get('tickSize', 0.00001))
+                break
+    except:
+        tick_size = 0.00001
+    
+    def round_to_tick(price, tick):
+        tick_str = f"{tick:.10f}".rstrip('0')
+        decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
+        return float(f"{price:.{decimals}f}")
+    
+    sl_trigger = round_to_tick(sl_price, tick_size)
+    tp_trigger = round_to_tick(tp_price, tick_size)
+    
+    sl_side = "SELL" if side == "BUY" else "BUY"
+    tp_side = "SELL" if side == "BUY" else "BUY"
+    
+    # Place SL
+    sl_params = "symbol={}&side={}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity={}&reduceOnly=true&triggerPrice={}&stopPrice={}&workingType=CONTRACT_PRICE&timestamp={}".format(
+        symbol, sl_side, quantity, sl_trigger, sl_trigger, int(time.time() * 1000))
+    sl_sig = get_sig(sl_params)
+    sl_url = "https://fapi.binance.com/fapi/v1/algoOrder?{}&signature={}".format(sl_params, sl_sig)
+    try:
+        sl_r = requests.post(sl_url, headers=headers, timeout=10)
+        if sl_r.status_code == 200:
+            print(f"    🛡 SL placed: {sl_trigger}")
+        else:
+            print(f"    ⚠️ SL failed: {sl_r.text[:80]}")
+    except Exception as e:
+        print(f"    ⚠️ SL error: {e}")
+    
+    # Place TP
+    tp_params = "symbol={}&side={}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity={}&reduceOnly=true&triggerPrice={}&stopPrice={}&workingType=CONTRACT_PRICE&timestamp={}".format(
+        symbol, tp_side, quantity, tp_trigger, tp_trigger, int(time.time() * 1000))
+    tp_sig = get_sig(tp_params)
+    tp_url = "https://fapi.binance.com/fapi/v1/algoOrder?{}&signature={}".format(tp_params, tp_sig)
+    try:
+        tp_r = requests.post(tp_url, headers=headers, timeout=10)
+        if tp_r.status_code == 200:
+            print(f"    📈 TP placed: {tp_trigger}")
+        else:
+            print(f"    ⚠️ TP failed: {tp_r.text[:80]}")
+    except Exception as e:
+        print(f"    ⚠️ TP error: {e}")
+
+
 def close_position(symbol, side, quantity):
     ts = int(time.time() * 1000)
     params = f'symbol={symbol}&side={side}&type=MARKET&quantity={quantity}&timestamp={ts}'
@@ -456,6 +513,67 @@ def main():
                 
                 # Get SL/TP from saved data, or calculate from ATR
                 pos_data = saved_data.get(symbol, {})
+                
+                # === LIMIT ORDER HANDLING ===
+                # Check if this is a pending limit order (not yet filled)
+                if pos_data and pos_data.get('limit_status') == 'PENDING':
+                    limit_id = pos_data.get('limit_order_id')
+                    placed_at = pos_data.get('limit_placed_at', 0)
+                    now_ms = int(time.time() * 1000)
+                    age_minutes = (now_ms - placed_at) / 60000
+                    
+                    if limit_id:
+                        # Check order status
+                        headers = {'X-MBX-APIKEY': API_KEY}
+                        ts = int(time.time() * 1000)
+                        check_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, ts)
+                        check_sig = get_signature(check_params)
+                        check_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(check_params, check_sig)
+                        try:
+                            check_r = requests.get(check_url, headers=headers, timeout=10)
+                            order_status = check_r.json()
+                            status = order_status.get('status', '')
+                            
+                            if status == 'FILLED':
+                                # Limit order filled! Update entry and place SL/TP
+                                exec_price = float(order_status.get('avgPrice', pos_data.get('entry', 0)))
+                                print(f"  {symbol}: ✅ LIMIT FILLED at {exec_price:.6f}")
+                                pos_data['entry'] = exec_price
+                                pos_data['limit_status'] = 'FILLED'
+                                # Place SL/TP
+                                sl_price_save = pos_data.get('sl')
+                                tp_price_save = pos_data.get('tp1')
+                                if sl_price_save and tp_price_save:
+                                    place_sl_tp_only(symbol, pos_data.get('side', 'LONG'), float(order_status.get('origQty', 0)), float(sl_price_save), float(tp_price_save))
+                                # Save updated data
+                                saved_data[symbol] = pos_data
+                                with open(positions_file, 'w') as f:
+                                    json.dump(saved_data, f)
+                                # Continue to normal monitoring
+                            elif age_minutes > 5:
+                                # 5 min timeout — cancel unfilled order
+                                cancel_ts = int(time.time() * 1000)
+                                cancel_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, cancel_ts)
+                                cancel_sig = get_signature(cancel_params)
+                                cancel_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(cancel_params, cancel_sig)
+                                try:
+                                    requests.delete(cancel_url, headers=headers, timeout=10)
+                                    print(f"  {symbol}: 🧹 Limit order cancelled (5min timeout)")
+                                except:
+                                    pass
+                                # Remove from saved
+                                del saved_data[symbol]
+                                with open(positions_file, 'w') as f:
+                                    json.dump(saved_data, f)
+                                continue
+                            else:
+                                print(f"  {symbol}: ⏳ Limit order {status} ({age_minutes:.1f}min)")
+                                continue  # Skip monitoring until filled
+                        except Exception as e:
+                            print(f"  {symbol}: ⚠️ Check limit order error: {e}")
+                            continue
+                    else:
+                        continue
                 
                 if pos_data and 'sl' in pos_data and 'tp1' in pos_data:
                     # Use saved SL/TP from scanner
