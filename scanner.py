@@ -574,6 +574,188 @@ def calc_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 
+def calc_stochrsi(prices, rsi_period=14, stoch_period=14, k_period=3, d_period=3):
+    """Calculate Stochastic RSI.
+    
+    Returns:
+        dict: {'k': %K, 'd': %D, 'prev_k': previous %K}
+        Values 0-100. <20 = oversold, >80 = overbought.
+    """
+    if len(prices) < rsi_period + stoch_period + d_period:
+        return {'k': 50, 'd': 50, 'prev_k': 50}
+    
+    # Calculate RSI values for each candle
+    rsi_values = []
+    for i in range(rsi_period, len(prices)):
+        deltas = [prices[j] - prices[j-1] for j in range(i - rsi_period + 1, i + 1)]
+        gains = [d if d > 0 else 0 for d in deltas]
+        losses = [-d if d < 0 else 0 for d in deltas]
+        avg_gain = sum(gains) / rsi_period
+        avg_loss = sum(losses) / rsi_period
+        rs = avg_gain / avg_loss if avg_loss > 0 else 100
+        rsi_values.append(100 - (100 / (1 + rs)))
+    
+    if len(rsi_values) < stoch_period + d_period:
+        return {'k': 50, 'd': 50, 'prev_k': 50}
+    
+    # Stochastic of RSI
+    stoch_values = []
+    for i in range(stoch_period - 1, len(rsi_values)):
+        rsi_window = rsi_values[i - stoch_period + 1:i + 1]
+        lowest = min(rsi_window)
+        highest = max(rsi_window)
+        if highest == lowest:
+            stoch_values.append(50)
+        else:
+            stoch_values.append((rsi_values[i] - lowest) / (highest - lowest) * 100)
+    
+    if len(stoch_values) < d_period:
+        return {'k': 50, 'd': 50, 'prev_k': 50}
+    
+    # %K = SMA of StochRSI
+    k_values = []
+    for i in range(d_period - 1, len(stoch_values)):
+        k_values.append(sum(stoch_values[i - d_period + 1:i + 1]) / d_period)
+    
+    if len(k_values) < d_period:
+        return {'k': 50, 'd': 50, 'prev_k': 50}
+    
+    # %D = SMA of %K
+    d_values = []
+    for i in range(d_period - 1, len(k_values)):
+        d_values.append(sum(k_values[i - d_period + 1:i + 1]) / d_period)
+    
+    current_k = k_values[-1]
+    current_d = d_values[-1] if d_values else current_k
+    prev_k = k_values[-2] if len(k_values) >= 2 else current_k
+    
+    return {'k': current_k, 'd': current_d, 'prev_k': prev_k}
+
+
+def calc_adx(candles, period=14):
+    """Calculate ADX (Average Directional Index).
+    
+    Returns:
+        dict: {'adx': adx_value, 'plus_di': +DI, 'minus_di': -DI}
+        ADX > 25 = strong trend. ADX < 20 = no trend (avoid trading).
+    """
+    if len(candles) < period + 1:
+        return {'adx': 20, 'plus_di': 25, 'minus_di': 25}
+    
+    highs = [float(c[1]) for c in candles]
+    lows = [float(c[2]) for c in candles]
+    closes = [float(c[4]) for c in candles]
+    
+    # Calculate True Range, +DM, -DM for each candle
+    tr_list = []
+    plus_dm = []
+    minus_dm = []
+    
+    for i in range(1, len(candles)):
+        high = highs[i]
+        low = lows[i]
+        prev_high = highs[i-1]
+        prev_low = lows[i-1]
+        prev_close = closes[i-1]
+        
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        tr_list.append(tr)
+        
+        up_move = high - prev_high
+        down_move = prev_low - low
+        
+        if up_move > down_move and up_move > 0:
+            plus_dm.append(up_move)
+        else:
+            plus_dm.append(0)
+        
+        if down_move > up_move and down_move > 0:
+            minus_dm.append(down_move)
+        else:
+            minus_dm.append(0)
+    
+    if len(tr_list) < period:
+        return {'adx': 20, 'plus_di': 25, 'minus_di': 25}
+    
+    # Smooth with Wilder's method (EMA-like with period)
+    def wilder_smooth(values, period):
+        smoothed = [sum(values[:period])]
+        for v in values[period:]:
+            smoothed.append(smoothed[-1] - smoothed[-1] / period + v)
+        return smoothed
+    
+    if len(tr_list) >= period * 2:
+        tr_smooth = wilder_smooth(tr_list, period)
+        plus_smooth = wilder_smooth(plus_dm, period)
+        minus_smooth = wilder_smooth(minus_dm, period)
+        
+        # Calculate +DI, -DI
+        if tr_smooth[-1] == 0:
+            return {'adx': 20, 'plus_di': 25, 'minus_di': 25}
+        
+        plus_di = (plus_smooth[-1] / tr_smooth[-1]) * 100
+        minus_di = (minus_smooth[-1] / tr_smooth[-1]) * 100
+        
+        # Calculate DX
+        di_sum = plus_di + minus_di
+        if di_sum == 0:
+            dx = 0
+        else:
+            dx = abs(plus_di - minus_di) / di_sum * 100
+        
+        # Calculate ADX (smoothed DX)
+        if len(tr_list) >= period * 2:
+            # Build DX series
+            dx_series = []
+            for i in range(len(tr_smooth)):
+                ps = plus_smooth[i]
+                ms = minus_smooth[i]
+                s = ps + ms
+                if s > 0:
+                    dx_series.append(abs(ps - ms) / s * 100)
+                else:
+                    dx_series.append(0)
+            
+            # ADX = smoothed DX
+            if len(dx_series) >= period:
+                adx_values = [sum(dx_series[:period]) / period]
+                for d in dx_series[period:]:
+                    adx_values.append((adx_values[-1] * (period - 1) + d) / period)
+                adx = adx_values[-1]
+            else:
+                adx = dx
+        else:
+            adx = dx
+        
+        return {'adx': adx, 'plus_di': plus_di, 'minus_di': minus_di}
+    
+    return {'adx': 20, 'plus_di': 25, 'minus_di': 25}
+
+
+def get_order_book_imbalance(symbol, limit=20):
+    """Get order book imbalance (bid vs ask volume ratio).
+    
+    Returns:
+        dict: {'ratio': bid_vol/ask_vol, 'bid_vol': total_bid_qty, 'ask_vol': total_ask_qty}
+        ratio > 1 = more bids (bullish pressure), < 1 = more asks (bearish pressure)
+    """
+    try:
+        url = f'https://fapi.binance.com/fapi/v1/depth?symbol={symbol}&limit={limit}'
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        
+        if 'bids' not in data or 'asks' not in data:
+            return {'ratio': 1.0, 'bid_vol': 0, 'ask_vol': 0}
+        
+        bid_vol = sum(float(b[1]) for b in data['bids'])
+        ask_vol = sum(float(a[1]) for a in data['asks'])
+        
+        ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
+        return {'ratio': ratio, 'bid_vol': bid_vol, 'ask_vol': ask_vol}
+    except Exception as e:
+        return {'ratio': 1.0, 'bid_vol': 0, 'ask_vol': 0}
+
+
 def detect_divergence(prices, period=14):
     """Detect RSI/MACD divergence.
     
@@ -866,6 +1048,16 @@ def analyze_symbol(symbol, stats):
         return 100 - (100 / (1 + rs))
     
     rsi_14 = calc_rsi(closes, 14)
+    
+    # === NEW INDICATORS: StochRSI + ADX + Order Book CVD ===
+    stoch_rsi = calc_stochrsi(closes, rsi_period=14, stoch_period=14, k_period=3, d_period=3)
+    adx_data = calc_adx(candles, period=14)
+    adx_value = adx_data['adx']
+    plus_di = adx_data['plus_di']
+    minus_di = adx_data['minus_di']
+    
+    # Order Book Imbalance (CVD-lite) - call only if we have enough score to bother
+    ob_imbalance = {'ratio': 1.0, 'bid_vol': 0, 'ask_vol': 0}
     # RSI-based filter: reject bad entries
     squeeze = 0  # Initialize early to avoid "not defined" errors
     ema_50 = None  # Initialize early to avoid "not defined" errors
@@ -974,6 +1166,14 @@ def analyze_symbol(symbol, stats):
         if abs(funding_rate) < 0.05: long_score += 1
         # Bollinger Squeeze: +1
         if squeeze > 0: long_score += 1
+        # StochRSI Oversold Bounce: +1 (%K < 30, about to cross up)
+        if stoch_rsi['k'] < 30: long_score += 1
+        # StochRSI Bullish Cross: +1 (%K crosses above %D from below 50)
+        if stoch_rsi['k'] > stoch_rsi['d'] and stoch_rsi['prev_k'] < stoch_rsi['d'] and stoch_rsi['k'] < 50: long_score += 1
+        # ADX Strong Trend: +1 (ADX > 25, market is trending)
+        if adx_value > 25: long_score += 1
+        # +DI > -DI: +1 (bullish directional strength)
+        if plus_di > minus_di: long_score += 1
         
         runner_score = long_score
     
@@ -1010,6 +1210,14 @@ def analyze_symbol(symbol, stats):
         if ema_9 and current < ema_9: short_score += 1
         # VWAP + EMA9 Bonus: +1 (both conditions met)
         if current < vwap and (ema_9 and current < ema_9): short_score += 1
+        # StochRSI Overbought: +1 (%K > 70)
+        if stoch_rsi['k'] > 70: short_score += 1
+        # StochRSI Bearish Cross: +1 (%K crosses below %D from above 50)
+        if stoch_rsi['k'] < stoch_rsi['d'] and stoch_rsi['prev_k'] > stoch_rsi['d'] and stoch_rsi['k'] > 50: short_score += 1
+        # ADX Strong Trend: +1 (ADX > 25, market is trending)
+        if adx_value > 25: short_score += 1
+        # -DI > +DI: +1 (bearish directional strength)
+        if minus_di > plus_di: short_score += 1
         
         runner_score = short_score
     
@@ -1050,8 +1258,16 @@ def analyze_symbol(symbol, stats):
         return None
     if direction == "SHORT" and ema_position < 15:
         # Price too extended below ATR bands for shorts
-        print(f"(ema_pos={ema_position:.0f}<15)", end=" ", flush=True)
+        print(f"(ema_pos={ema_position:.0f}<=15)", end=" ", flush=True)
         return None
+    
+    # ADX Filter: reject if market is not trending (ADX < 20)
+    if adx_value < 20:
+        print(f"(adx={adx_value:.0f}<20)", end=" ", flush=True)
+        return None
+    
+    # Order Book Imbalance - fetch only after all other filters pass (rate-limit friendly)
+    ob_imbalance = get_order_book_imbalance(symbol, limit=20)
     
     # EMAs
     if not ema_21 or not ema_50:
@@ -1196,6 +1412,13 @@ def analyze_symbol(symbol, stats):
         'signal_tier': 'NEUTRAL',
         'macd_histogram': histogram if 'histogram' in locals() else 0,
         'squeeze': squeeze if 'squeeze' in locals() else 0,
+        # New indicators v1.0.42
+        'stoch_rsi_k': stoch_rsi['k'],
+        'stoch_rsi_d': stoch_rsi['d'],
+        'adx': adx_value,
+        'plus_di': plus_di,
+        'minus_di': minus_di,
+        'ob_ratio': ob_imbalance['ratio'],
     }
 
 def fetch_brave_news(query, count=2):
@@ -1344,12 +1567,18 @@ def format_signal(analysis, stats):
 • Volume 5x+: {'🔥 Yes' if s.get('vol_ratio', 0) > 5 else '❌ No'}
 • Breakout: {'✅ Yes' if s.get('breakout') else '❌ No'}
 • Filter: {'✅ PASSED' if filter_signal(s.get('symbol',''), s)[0] else '❌ REJECTED'}
-• Score: {s.get('runner_score', 0)}/10
+• Score: {s.get('runner_score', 0)}/16
 
 🆕 PHASE 1 INDICATORS:
 • Divergence: {s.get('divergence', 'NONE')}
 • Confidence: {s.get('confidence', 0.5):.0%}
 • Signal: {s.get('signal_tier', 'NEUTRAL')}
+
+🔥 v1.0.42 INDICATORS:
+• ADX: {s.get('adx', 0):.1f} {'📈 Trend' if s.get('adx', 0) > 25 else '⚠️ Weak'}
+• +DI/-DI: {s.get('plus_di', 0):.1f} / {s.get('minus_di', 0):.1f}
+• StochRSI: %K={s.get('stoch_rsi_k', 50):.1f} %D={s.get('stoch_rsi_d', 50):.1f}
+• OB Ratio: {s.get('ob_ratio', 1.0):.2f} {'🟢 Bid Heavy' if s.get('ob_ratio', 1.0) > 1.2 else '🔴 Ask Heavy' if s.get('ob_ratio', 1.0) < 0.8 else '⚪ Neutral'}
 
 ⏱️ COOLDOWN: 2h after SL
 • Support: {s['support']:.6f}
@@ -1359,7 +1588,7 @@ def format_signal(analysis, stats):
 • 1H Momentum: {s.get('change_1h', 0):+.1f}%
 • Volume Spike: {s.get('vol_ratio', 1):.1f}x
 • Breakout: {'✅ Yes' if s.get('breakout') else '❌ No'}
-• Score: {s.get('runner_score', 0)}/10 🚀
+• Score: {s.get('runner_score', 0)}/16 🚀
 
 💡 INSIGHT: {s['direction']} | {s['structure']} | RSI: {s['rsi']:.1f}
 🎯 Entry: ${s['current']:.6f}
