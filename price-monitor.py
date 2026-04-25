@@ -125,15 +125,10 @@ def should_activate_trailing_tp(entry, current, tp, side, trail_percent=1.5):
 
 def update_sl_to_breakeven(symbol, side, new_sl):
     """Update stop loss to breakeven via Binance API"""
-    ts = int(time.time() * 1000)
     headers = {'X-MBX-APIKEY': API_KEY}
-    try:
-        params = f'symbol={symbol}&timestamp={ts}'
-        sig = get_sig(params)
-        requests.delete(f'https://fapi.binance.com/fapi/v1/allOpenOrders?{params}&signature={sig}', 
-                       headers=headers, timeout=15)
-    except:
-        pass
+
+    # Cancel existing algo orders for this symbol (SL/TP)
+    cancel_algo_orders(symbol)
     
     ts = int(time.time() * 1000)
     close_side = 'SELL' if side == 'LONG' else 'BUY'
@@ -248,12 +243,42 @@ def save_positions_sl_tp(data):
     except:
         pass
 
+def cancel_algo_orders(symbol):
+    """Cancel all open algo (conditional) orders for a symbol.
+    Uses DELETE /fapi/v1/algoOpenOrders (single call, cancels all algo orders for the symbol).
+    """
+    headers = {'X-MBX-APIKEY': API_KEY}
+    try:
+        ts = int(time.time() * 1000)
+        params = f'symbol={symbol}&timestamp={ts}'
+        sig = get_sig(params)
+        r = requests.delete(
+            f'https://fapi.binance.com/fapi/v1/algoOpenOrders?{params}&signature={sig}',
+            headers=headers, timeout=15
+        )
+        if r.status_code == 200:
+            print(f"  🧹 Cancelled algo orders for {symbol}")
+            return True
+        else:
+            print(f"  ⚠️ Cancel algo orders failed for {symbol}: {r.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"  ⚠️ Cancel algo orders error for {symbol}: {e}")
+        return False
+
 def close_position(symbol, side, quantity):
     ts = int(time.time() * 1000)
     params = f'symbol={symbol}&side={side}&type=MARKET&quantity={quantity}&timestamp={ts}'
-    r = requests.post(f'https://fapi.binance.com/fapi/v1/order?{params}&signature={get_sig(params)}',
+    sig = get_sig(params)
+    r = requests.post(f'https://fapi.binance.com/fapi/v1/order?{params}&signature={sig}',
                      headers={'X-MBX-APIKEY': API_KEY}, timeout=15)
-    return r.json()
+    result = r.json()
+
+    # Cancel orphaned SL/TP algo orders after position closes
+    if result.get('orderId'):
+        cancel_algo_orders(symbol)
+
+    return result
 
 def notify_trade(notification_type, data):
     """Send notification based on config settings"""
@@ -540,7 +565,7 @@ def main():
                     profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
                     print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
                     update_sl_to_breakeven(symbol, side, new_trail_sl)
-                    send_notification('breakeven', {
+                    notify_trade('breakeven', {
                         'symbol': symbol,
                         'entry': entry,
                         'sl': new_trail_sl,
@@ -648,7 +673,7 @@ def main():
                     profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
                     print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
                     update_sl_to_breakeven(symbol, side, new_trail_sl)
-                    send_notification('breakeven', {
+                    notify_trade('breakeven', {
                         'symbol': symbol,
                         'entry': entry,
                         'sl': new_trail_sl,
