@@ -109,25 +109,32 @@ def should_trail_sl(entry, current, sl, side, profit_threshold=5.0, trail_distan
                 return new_sl
     return None
 
-def should_activate_trailing_tp(entry, current, tp, side, trail_percent=1.5):
-    """Activate trailing TP when profit > trail_percent%"""
+def should_activate_trailing_tp(entry, current, tp, side, trail_percent=10.0, trail_distance=2.0):
+    """Activate trailing TP when profit > trail_percent%.
+    
+    For LONG: TP trails trail_distance% BELOW current (triggers on pullback).
+    For SHORT: TP trails trail_distance% ABOVE current (triggers on bounce).
+    """
     if side == 'LONG':
         profit_pct = ((current - entry) / entry) * 100
         if profit_pct >= trail_percent:
-            new_tp = current * 1.005
-            return new_tp if new_tp > tp else tp
+            new_tp = current * (1 - trail_distance / 100)
+            return new_tp if new_tp > entry else tp  # Never set TP below entry
     else:
         profit_pct = ((entry - current) / entry) * 100
         if profit_pct >= trail_percent:
-            new_tp = current * 0.995
-            return new_tp if new_tp < tp else tp
+            new_tp = current * (1 + trail_distance / 100)
+            return new_tp if new_tp < entry else tp  # Never set TP above entry
     return None
 
-def update_sl_to_breakeven(symbol, side, new_sl):
-    """Update stop loss to breakeven via Binance API"""
+def update_sl_to_breakeven(symbol, side, new_sl, tp_price=None):
+    """Update stop loss via Binance API. Also replaces TP if tp_price provided.
+    
+    cancel_algo_orders removes ALL orders (SL + TP), so we must replace both.
+    """
     headers = {'X-MBX-APIKEY': API_KEY}
 
-    # Cancel existing algo orders for this symbol (SL/TP)
+    # Cancel existing algo orders for this symbol (SL + TP)
     cancel_algo_orders(symbol)
     
     ts = int(time.time() * 1000)
@@ -148,20 +155,44 @@ def update_sl_to_breakeven(symbol, side, new_sl):
     except:
         new_sl_rounded = new_sl
     
+    # Place new SL
     params = f'symbol={symbol}&side={close_side}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={new_sl_rounded}&stopPrice={new_sl_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
     sig = get_sig(params)
+    sl_result = None
     try:
-        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}', 
+        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}',
                         headers=headers, timeout=15)
-        return r.json()
+        sl_result = r.json()
     except:
-        return None
+        pass
+    
+    # Replace TP if provided (cancel_algo_orders killed it)
+    if tp_price:
+        try:
+            tp_rounded = float(math.floor(tp_price / tick_size) * tick_size)
+        except:
+            tp_rounded = tp_price
+        ts2 = int(time.time() * 1000)
+        tp_params = f'symbol={symbol}&side={close_side}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={tp_rounded}&stopPrice={tp_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts2}'
+        tp_sig = get_sig(tp_params)
+        try:
+            requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{tp_params}&signature={tp_sig}',
+                         headers=headers, timeout=15)
+        except:
+            pass
+    
+    return sl_result
 
-def update_tp_trailing(symbol, side, new_tp):
-    """Update TP to trailing level via Binance API"""
-    ts = int(time.time() * 1000)
+def update_tp_trailing(symbol, side, new_tp, sl_price=None):
+    """Update TP to trailing level via Binance API.
+    
+    Cancels existing orders and replaces both TP and SL if sl_price provided.
+    """
     headers = {'X-MBX-APIKEY': API_KEY}
     close_side = 'SELL' if side == 'LONG' else 'BUY'
+    
+    # Cancel existing algo orders (kills both SL and TP)
+    cancel_algo_orders(symbol)
     
     # Round to tickSize for proper precision
     try:
@@ -178,14 +209,34 @@ def update_tp_trailing(symbol, side, new_tp):
     except:
         new_tp_rounded = new_tp
     
+    # Place new TP
+    ts = int(time.time() * 1000)
     params = f'symbol={symbol}&side={close_side}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={new_tp_rounded}&stopPrice={new_tp_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
     sig = get_sig(params)
+    tp_result = None
     try:
-        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}', 
+        r = requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{params}&signature={sig}',
                         headers=headers, timeout=15)
-        return r.json()
+        tp_result = r.json()
     except:
-        return None
+        pass
+    
+    # Replace SL if provided (cancel_algo_orders killed it)
+    if sl_price:
+        try:
+            sl_rounded = float(math.floor(sl_price / tick_size) * tick_size)
+        except:
+            sl_rounded = sl_price
+        ts2 = int(time.time() * 1000)
+        sl_params = f'symbol={symbol}&side={close_side}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={sl_rounded}&stopPrice={sl_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts2}'
+        sl_sig = get_sig(sl_params)
+        try:
+            requests.post(f'https://fapi.binance.com/fapi/v1/algoOrder?{sl_params}&signature={sl_sig}',
+                         headers=headers, timeout=15)
+        except:
+            pass
+    
+    return tp_result
 
 def get_positions():
     ts = int(time.time() * 1000)
@@ -642,13 +693,15 @@ def main():
                 
                 # Check for trailing TP - activate when profit > configured %
                 try:
-                    trail_thresh = MIN_PROFIT_TRAILING_TP if 'MIN_PROFIT_TRAILING_TP' in dir() else 3.0
+                    trail_thresh = MIN_PROFIT_TRAILING_TP if 'MIN_PROFIT_TRAILING_TP' in dir() else 10.0
+                    trail_dist = TRAIL_PERCENT if 'TRAIL_PERCENT' in dir() else 2.0
                 except:
-                    trail_thresh = 3.0
-                new_trailing_tp = should_activate_trailing_tp(entry, current, tp_price, side, trail_percent=trail_thresh)
+                    trail_thresh = 10.0
+                    trail_dist = 2.0
+                new_trailing_tp = should_activate_trailing_tp(entry, current, tp_price, side, trail_percent=trail_thresh, trail_distance=trail_dist)
                 if new_trailing_tp and new_trailing_tp != tp_price:
                     print(f"    📈 Trailing TP: {tp_price:.6f} -> {new_trailing_tp:.6f}")
-                    update_tp_trailing(symbol, side, new_trailing_tp)
+                    update_tp_trailing(symbol, side, new_trailing_tp, sl_price)
                     tp_price = new_trailing_tp
                 
                 # === AGGRESSIVE AUTO-CLOSE ===
@@ -720,7 +773,7 @@ def main():
                 if new_trail_sl and new_trail_sl != sl_price:
                     profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
                     print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
-                    update_sl_to_breakeven(symbol, side, new_trail_sl)
+                    update_sl_to_breakeven(symbol, side, new_trail_sl, tp_price)
                     notify_trade('breakeven', {
                         'symbol': symbol,
                         'entry': entry,

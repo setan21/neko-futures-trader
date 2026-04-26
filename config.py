@@ -33,9 +33,9 @@ TRAIL_PERCENT = 2.0             # Trail TP by this % when trailing
 POST_SIGNALS_TO_TELEGRAM = True
 NOTIFY_ON_OPEN = True
 NOTIFY_ON_CLOSE = True
-NOTIFY_ON_BREAKEVEN = True
-NOTIFY_ON_TRAILING_SL = True
-NOTIFY_ON_TRAILING_TP = True
+NOTIFY_ON_BREAKEVEN = False
+NOTIFY_ON_TRAILING_SL = False
+NOTIFY_ON_TRAILING_TP = False
 
 # ── SCANNER ──────────────────────────────────────────────────────────────────
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
