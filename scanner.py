@@ -527,111 +527,70 @@ def place_order(symbol, side, quantity):
     return r.json()
 
 
-def place_market_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
-    """Place MARKET entry + SL + TP in a single batch API call.
-    
-    Uses POST /fapi/v1/batchOrders to place all 3 orders atomically.
-    Entry is MARKET (immediate fill), SL/TP are STOP_MARKET/TAKE_PROFIT_MARKET algo orders.
-    Replaces old limit order system that caused order spam.
-    """
-    headers = {'X-MBX-APIKEY': API_KEY}
+def place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
+    """Place market order FIRST, only add SL/TP if market order succeeds"""
     ts = int(time.time() * 1000)
     
-    # Get tick size AND step size for proper rounding
-    try:
-        info_r = requests.get('https://fapi.binance.com/fapi/v1/exchangeInfo', timeout=10)
-        tick_size = 0.00001
-        step_size = 0.001
-        for s in info_r.json().get('symbols', []):
-            if s['symbol'] == symbol:
-                for f in s.get('filters', []):
-                    if f.get('filterType') == 'PRICE_FILTER':
-                        tick_size = float(f.get('tickSize', 0.00001))
-                    elif f.get('filterType') == 'LOT_SIZE':
-                        step_size = float(f.get('stepSize', 0.001))
-                break
-    except:
-        tick_size = 0.00001
-        step_size = 0.001
+    # First place the market order
+    params = "symbol={}&side={}&type=MARKET&quantity={}&timestamp={}".format(symbol, side, quantity, ts)
+    sig = get_signature(params)
+    url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(params, sig)
+    headers = {'X-MBX-APIKEY': API_KEY}
+    r = requests.post(url, headers=headers, timeout=15)
+    result = r.json()
     
-    def round_to_tick(price, tick):
-        tick_str = f"{tick:.10f}".rstrip('0')
-        decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
-        return float(f"{price:.{decimals}f}")
+    # Only place SL/TP if market order succeeded
+    order_id = result.get('orderId')
+    if not order_id or str(order_id) == 'N/A':
+        return result  # Return early - market order failed, no SL/TP
     
-    def round_qty(qty, step):
-        """Round quantity to step_size precision — critical for batch orders"""
-        step_str = f"{step:.10f}".rstrip('0')
-        decimals = len(step_str.split('.')[1]) if '.' in step_str else 0
-        # Floor to step
-        steps = int(qty / step)
-        rounded = steps * step
-        return float(f"{rounded:.{decimals}f}")
-    
-    sl_rounded = round_to_tick(sl_price, tick_size) if sl_price else None
-    tp_rounded = round_to_tick(tp_price, tick_size) if tp_price else None
-    qty_rounded = round_qty(quantity, step_size)
-    sl_side = "SELL" if side == "BUY" else "BUY"
-    
-    # Build batch orders array
-    orders = []
-    
-    # 1. MARKET entry order (immediate fill, no spam)
-    orders.append({
-        'symbol': symbol,
-        'side': side,
-        'type': 'MARKET',
-        'quantity': str(qty_rounded),
-    })
-    
-    # 2. STOP_MARKET (SL) - algo order
-    if sl_rounded:
-        orders.append({
-            'symbol': symbol,
-            'side': sl_side,
-            'type': 'STOP_MARKET',
-            'stopPrice': str(sl_rounded),
-            'closePosition': 'true',
-            'workingType': 'CONTRACT_PRICE',
-        })
-    
-    # 3. TAKE_PROFIT_MARKET (TP) - algo order
-    if tp_rounded:
-        orders.append({
-            'symbol': symbol,
-            'side': sl_side,
-            'type': 'TAKE_PROFIT_MARKET',
-            'stopPrice': str(tp_rounded),
-            'closePosition': 'true',
-            'workingType': 'CONTRACT_PRICE',
-        })
-    
-    # Execute batch
-    result = batch_orders(orders)
-    
-    # Parse results
-    if isinstance(result, list) and len(result) > 0:
-        entry_result = result[0] if len(result) > 0 else {}
-        sl_result = result[1] if len(result) > 1 else {}
-        tp_result = result[2] if len(result) > 2 else {}
+    # Place SL and TP using Algo API
+    if sl_price and tp_price:
+        # Get tickSize for proper price rounding
+        try:
+            info_r = requests.get('https://fapi.binance.com/fapi/v1/exchangeInfo', timeout=10)
+            tick_size = 0.00001
+            for s in info_r.json().get('symbols', []):
+                if s['symbol'] == symbol:
+                    for f in s.get('filters', []):
+                        if f.get('filterType') == 'PRICE_FILTER':
+                            tick_size = float(f.get('tickSize', 0.00001))
+                    break
+        except:
+            tick_size = 0.00001
         
-        order_id = entry_result.get('orderId')
-        if order_id:
-            print(f"  📦 Batch placed: MARKET SL={sl_rounded} TP={tp_rounded} qty={qty_rounded}")
-            return {
-                'orderId': order_id,
-                'status': entry_result.get('status', 'FILLED'),
-                'sl_order_id': sl_result.get('orderId'),
-                'tp_order_id': tp_result.get('orderId'),
-                'batch': True,
-            }
-        else:
-            # Entry failed - return error
-            print(f"  ⚠️ Batch entry failed: {entry_result}")
-            return entry_result
-    else:
-        print(f"  ⚠️ Batch order failed: {result}")
-        return {'error': 'batch_failed', 'details': result}
+        def round_to_tick(price, tick):
+            tick_str = f"{tick:.10f}".rstrip('0')
+            decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
+            return float(f"{price:.{decimals}f}")
+        
+        sl_trigger_rounded = round_to_tick(sl_price, tick_size)
+        tp_trigger_rounded = round_to_tick(tp_price, tick_size)
+        
+        # Place STOP Loss order using Algo API
+        sl_side = "SELL" if side == "BUY" else "BUY"
+        sl_params = "symbol={}&side={}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity={}&reduceOnly=true&triggerPrice={}&stopPrice={}&workingType=CONTRACT_PRICE&timestamp={}".format(
+            symbol, sl_side, quantity, sl_trigger_rounded, sl_trigger_rounded, int(time.time() * 1000))
+        sl_sig = get_signature(sl_params)
+        sl_url = "https://fapi.binance.com/fapi/v1/algoOrder?{}&signature={}".format(sl_params, sl_sig)
+        sl_r = requests.post(sl_url, headers=headers, timeout=10)
+        if sl_r.status_code != 200:
+            if 'Invalid symbol status' in sl_r.text:
+                print(f"  ⚠️ SL order failed: Symbol {symbol} cannot be traded (Invalid status)")
+            else:
+                print(f"  ⚠️ SL order failed: {sl_r.text[:100]}")
+        
+        # Place TAKE PROFIT order using Algo API
+        tp_side = "SELL" if side == "BUY" else "BUY"
+        tp_params = "symbol={}&side={}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity={}&reduceOnly=true&triggerPrice={}&stopPrice={}&workingType=CONTRACT_PRICE&timestamp={}".format(
+            symbol, tp_side, quantity, tp_trigger_rounded, tp_trigger_rounded, int(time.time() * 1000))
+        tp_sig = get_signature(tp_params)
+        tp_url = "https://fapi.binance.com/fapi/v1/algoOrder?{}&signature={}".format(tp_params, tp_sig)
+        tp_r = requests.post(tp_url, headers=headers, timeout=10)
+        if tp_r.status_code != 200:
+            print(f"  ⚠️ TP order failed: {tp_r.text[:100]}")
+    
+    return result
 
 def set_leverage(symbol, lev=LEVERAGE):
     ts = int(time.time() * 1000)
@@ -2420,13 +2379,13 @@ def main():
                 sl_price = analysis.get('sl')
                 tp_price = analysis.get('tp1')
                 
-                # Place MARKET order with SL/TP (no more limit order spam)
-                result = place_market_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price)
+                # Place MARKET order with SL/TP (simple, no batch/limit)
+                result = place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price)
                 
                 order_id = result.get('orderId', 'N/A')
                 status = result.get('status', 'UNKNOWN')
                 
-                # Only post if order succeeded
+                # Only post if order succeeded (has valid orderId)
                 if order_id and order_id != 'N/A':
                     # Mark as processed immediately to prevent duplicate orders
                     is_duplicate = symbol in posted
@@ -2446,14 +2405,10 @@ def main():
                                 conf = llm_result.get('confidence', 0)
                                 provider_tag = f" [{provider}]" if provider else ""
                                 msg += f"📊 Model: {model_name}{provider_tag} | Conf: {conf:.0%}\n"
-                        current_price = analysis['current']
-                        msg += f"\n✅ ORDER PLACED: {analysis['direction']} (MARKET)\n"
-                        msg += f"🎯 Entry: ${current_price:.6f} (market)\n"
+                        msg += f"\n✅ ORDER EXECUTED: {analysis['direction']}\n"
                         msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
                         msg += f"📈 TP: ${analysis['tp1']:.6f}\n"
-                        if result.get('batch'):
-                            msg += f"📋 SL ID: {result.get('sl_order_id', 'N/A')} | TP ID: {result.get('tp_order_id', 'N/A')}"
-                        msg += f" | Status: FILLED"
+                        msg += f"📋 Order ID: {order_id} | Status: {status}"
                         
                         send_telegram(msg)
                         print(f"  Order: {order_id} | Posted to Telegram")
@@ -2466,31 +2421,16 @@ def main():
                                 with open(positions_file, 'r') as f:
                                     positions_data = json.load(f)
                             positions_data[symbol] = {
-                                'entry': current_price,
+                                'entry': analysis['current'],
                                 'sl': analysis['sl'],
                                 'tp1': analysis['tp1'],
                                 'side': side,
                                 'opened_at': datetime.now().isoformat(),
-                                # === Indicator scores at entry (for trade correlation analysis) ===
+                                # === Signal scores at entry (for trade analysis) ===
                                 'signal_score': analysis.get('runner_score', 0),
                                 'signal_rsi': analysis.get('rsi', 50),
                                 'signal_adx': analysis.get('adx', 0),
-                                'signal_stoch_rsi_k': analysis.get('stoch_rsi_k', 50),
-                                'signal_fisher': analysis.get('fisher', 0),
-                                'signal_taker_ratio': analysis.get('taker_ratio', 1.0),
-                                'signal_chop': analysis.get('chop', 50),
-                                'signal_vol_ratio': analysis.get('vol_ratio', 1),
-                                'signal_ema_position': analysis.get('ema_position', 50),
-                                'signal_macd_histogram': analysis.get('macd_histogram', 0),
-                                'signal_squeeze': analysis.get('squeeze', 0),
                                 'signal_direction': analysis.get('direction', 'LONG'),
-                                'signal_plus_di': analysis.get('plus_di', 0),
-                                'signal_minus_di': analysis.get('minus_di', 0),
-                                'signal_price_change': analysis.get('price_change', 0),
-                                'signal_weekly_change': analysis.get('weekly_change', 0),
-                                'signal_oi_change': analysis.get('oi_change', 0),
-                                'signal_top_trader_ratio': analysis.get('top_trader_ratio', 1.0),
-                                'signal_top_trader_trend': analysis.get('top_trader_trend', 'neutral'),
                             }
                             with open(positions_file, 'w') as f:
                                 json.dump(positions_data, f)
