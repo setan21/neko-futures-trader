@@ -512,7 +512,12 @@ def send_telegram(msg):
                     data={'chat_id': TELEGRAM_CHANNEL, 'text': msg, 'parse_mode': 'Markdown'})
 
 def check_multi_tp(symbol, side, entry, current, position_amt, original_amt):
-    """Check for multi-TP levels and close partial positions"""
+    """Check for multi-TP levels and close partial positions.
+    
+    TP1: Close TP1_CLOSE_PCT (25%) at TP1_PERCENT (5%) profit
+    TP2: Close TP2_CLOSE_PCT (25%) at TP2_PERCENT (10%) profit
+    Remaining 50% runs to PRICE_TP or trailing TP
+    """
     if side == 'LONG':
         profit_pct = ((current - entry) / entry) * 100
     else:
@@ -522,49 +527,35 @@ def check_multi_tp(symbol, side, entry, current, position_amt, original_amt):
     try:
         tp1 = TP1_PERCENT
         tp2 = TP2_PERCENT
-        tp3 = TP3_PERCENT
+        tp1_pct = TP1_CLOSE_PCT
+        tp2_pct = TP2_CLOSE_PCT
     except:
-        tp1, tp2, tp3 = 2.0, 4.0, 6.0
+        tp1, tp2 = 5.0, 10.0
+        tp1_pct, tp2_pct = 0.25, 0.25
     
     remaining_pct = (abs(position_amt) / original_amt) * 100 if original_amt > 0 else 0
+    close_side = 'SELL' if side == 'LONG' else 'BUY'
     
-    # TP3: Close remaining at +6% (check first - highest level)
-    if profit_pct >= tp3 and remaining_pct > 0:
-        close_amt = abs(position_amt)
-        close_side = 'SELL' if side == 'LONG' else 'BUY'
+    # TP2: Close tp2_pct at +tp2% (if enough remaining) — check first (higher level)
+    if profit_pct >= tp2 and remaining_pct > (tp2_pct * 100):
+        close_amt = abs(original_amt * tp2_pct)
         result = close_position(symbol, close_side, close_amt)
         if result and 'orderId' in result:
-            notify_trade('partial_tp', {
-                'symbol': symbol, 'tp_level': 'TP3', 'profit_pct': profit_pct,
-                'closed_amount': close_amt, 'remaining_pct': 0
-            })
-            print(f"    📈 TP3 HIT! Closed all at +{profit_pct:.2f}%")
+            log_trade(symbol, side, entry, current, close_amt, 
+                     (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
+                     'TP2', pos_data if 'pos_data' in dir() else None)
+            print(f"    📈 TP2 HIT! Closed {tp2_pct*100:.0f}% at +{profit_pct:.2f}%")
             return True
     
-    # TP2: Close 33% at +4% (if >33% remaining)
-    elif profit_pct >= tp2 and remaining_pct > 33:
-        close_amt = abs(original_amt * 0.33)
-        close_side = 'SELL' if side == 'LONG' else 'BUY'
+    # TP1: Close tp1_pct at +tp1% (if enough remaining)
+    elif profit_pct >= tp1 and remaining_pct > (tp1_pct * 100):
+        close_amt = abs(original_amt * tp1_pct)
         result = close_position(symbol, close_side, close_amt)
         if result and 'orderId' in result:
-            notify_trade('partial_tp', {
-                'symbol': symbol, 'tp_level': 'TP2', 'profit_pct': profit_pct,
-                'closed_amount': close_amt, 'remaining_pct': remaining_pct - 33
-            })
-            print(f"    📈 TP2 HIT! Closed 33% at +{profit_pct:.2f}%")
-            return True
-    
-    # TP1: Close 33% at +2% (if >66% remaining)
-    elif profit_pct >= tp1 and remaining_pct > 66:
-        close_amt = abs(original_amt * 0.33)
-        close_side = 'SELL' if side == 'LONG' else 'BUY'
-        result = close_position(symbol, close_side, close_amt)
-        if result and 'orderId' in result:
-            notify_trade('partial_tp', {
-                'symbol': symbol, 'tp_level': 'TP1', 'profit_pct': profit_pct,
-                'closed_amount': close_amt, 'remaining_pct': remaining_pct - 33
-            })
-            print(f"    📈 TP1 HIT! Closed 33% at +{profit_pct:.2f}%")
+            log_trade(symbol, side, entry, current, close_amt,
+                     (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
+                     'TP1', pos_data if 'pos_data' in dir() else None)
+            print(f"    📈 TP1 HIT! Closed {tp1_pct*100:.0f}% at +{profit_pct:.2f}%")
             return True
     
     return False

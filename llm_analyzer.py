@@ -12,16 +12,22 @@ import requests
 
 # === CONFIG (override from config.py if available) ===
 try:
-    from config import LLM_ENABLED, LLM_MODEL, LLM_BASE_URL, LLM_MIN_SCORE, LLM_TEMPERATURE
+    from config import (LLM_ENABLED, LLM_MODEL, LLM_BASE_URL, LLM_MIN_SCORE,
+                        LLM_TEMPERATURE, LLM_FALLBACK_ENABLED,
+                        LLM_FALLBACK_BASE_URL, LLM_FALLBACK_MODEL)
 except ImportError:
     LLM_ENABLED = True
     LLM_MODEL = "anthropic/claude-3.5-haiku"
     LLM_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
     LLM_MIN_SCORE = 4       # Only analyze candidates with score >= this
     LLM_TEMPERATURE = 0.1   # Low temp = more deterministic
+    LLM_FALLBACK_ENABLED = True
+    LLM_FALLBACK_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
+    LLM_FALLBACK_MODEL = "xiaomi/mimo-v2-pro"
 
-# Load API key from env
+# Load API keys from env
 LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+LLM_FALLBACK_API_KEY = os.environ.get("NOUS_API_KEY", "")
 
 # === CACHE ===
 _analysis_cache = {}
@@ -79,19 +85,39 @@ Reply in JSON ONLY:
     return prompt
 
 
-def call_llm(prompt, model=None, timeout=15):
-    """Call OpenRouter API. Returns response text or None."""
-
-    if not LLM_API_KEY:
-        print("  ⚠️ LLM: No API key configured (OPENROUTER_API_KEY)")
-        return None
-
-    model = model or LLM_MODEL
+def _do_api_call(url, api_key, model, payload, timeout):
+    """Make a single API call. Returns response dict or None."""
     headers = {
-        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if r.status_code == 200:
+            data = r.json()
+            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            usage = data.get('usage', {})
+            return {
+                'content': content.strip(),
+                'tokens_in': usage.get('prompt_tokens', 0),
+                'tokens_out': usage.get('completion_tokens', 0),
+            }
+        else:
+            print(f"  ⚠️ LLM API error ({url.split('/')[2]}): {r.status_code} — {r.text[:100]}")
+            return None
+    except requests.Timeout:
+        print(f"  ⚠️ LLM timeout ({url.split('/')[2]})")
+        return None
+    except Exception as e:
+        print(f"  ⚠️ LLM error ({url.split('/')[2]}): {e}")
+        return None
 
+
+def call_llm(prompt, model=None, timeout=15):
+    """Call LLM API with fallback. Primary: OpenRouter → Fallback: Nous Research."""
+
+    # Build payload once (same for both providers)
+    model = model or LLM_MODEL
     payload = {
         "model": model,
         "messages": [
@@ -110,31 +136,32 @@ def call_llm(prompt, model=None, timeout=15):
         "max_tokens": 150,
     }
 
-    try:
-        r = requests.post(
-            LLM_BASE_URL,
-            headers=headers,
-            json=payload,
-            timeout=timeout
-        )
-        if r.status_code == 200:
-            data = r.json()
-            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-            usage = data.get('usage', {})
-            return {
-                'content': content.strip(),
-                'tokens_in': usage.get('prompt_tokens', 0),
-                'tokens_out': usage.get('completion_tokens', 0),
-            }
-        else:
-            print(f"  ⚠️ LLM API error: {r.status_code} — {r.text[:100]}")
-            return None
-    except requests.Timeout:
-        print("  ⚠️ LLM timeout (>15s)")
-        return None
-    except Exception as e:
-        print(f"  ⚠️ LLM error: {e}")
-        return None
+    # --- Try Primary (OpenRouter) ---
+    if LLM_API_KEY:
+        print(f"  🧠 LLM → OpenRouter ({model})...")
+        result = _do_api_call(LLM_BASE_URL, LLM_API_KEY, model, payload, timeout)
+        if result:
+            result['provider'] = 'openrouter'
+            return result
+        print("  ⚠️ OpenRouter failed, trying fallback...")
+    else:
+        print("  ⚠️ No OpenRouter API key, skipping primary...")
+
+    # --- Try Fallback (Nous Research) ---
+    if LLM_FALLBACK_ENABLED and LLM_FALLBACK_API_KEY:
+        fallback_model = LLM_FALLBACK_MODEL
+        payload_fb = {**payload, "model": fallback_model}
+        print(f"  🧠 LLM → Nous Research ({fallback_model})...")
+        result = _do_api_call(LLM_FALLBACK_BASE_URL, LLM_FALLBACK_API_KEY,
+                              fallback_model, payload_fb, timeout)
+        if result:
+            result['provider'] = 'nous'
+            return result
+        print("  ⚠️ Nous fallback also failed")
+    else:
+        print("  ⚠️ Fallback disabled or no Nous API key")
+
+    return None
 
 
 def parse_llm_response(content):
@@ -227,6 +254,7 @@ def analyze_signal(analysis, force=False):
             'approved': True,
             'reason': 'LLM call failed, fail-open',
             'model': LLM_MODEL,
+            'provider': None,
             'tokens_in': 0,
             'tokens_out': 0,
             'latency_ms': latency_ms,
@@ -243,6 +271,7 @@ def analyze_signal(analysis, force=False):
             'approved': True,
             'reason': f'Parse failed: {response["content"][:80]}',
             'model': LLM_MODEL,
+            'provider': response.get('provider', 'unknown'),
             'tokens_in': response['tokens_in'],
             'tokens_out': response['tokens_out'],
             'latency_ms': latency_ms,
@@ -261,6 +290,7 @@ def analyze_signal(analysis, force=False):
         'reason': reason,
         'confidence': confidence,
         'model': LLM_MODEL,
+        'provider': response.get('provider', 'unknown'),
         'tokens_in': response['tokens_in'],
         'tokens_out': response['tokens_out'],
         'latency_ms': latency_ms,

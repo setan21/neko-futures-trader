@@ -14,7 +14,7 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 7             # Min score to enter in NORMAL mode
+MIN_SCORE_NORMAL = 7             # Min score to enter in NORMAL mode (raised from 5 - Apr 27)
 
 # ── SL/TP STRATEGY ────────────────────────────────────────────────────────────
 # Percentage-based: PRICE_SL / PRICE_TP
@@ -28,6 +28,13 @@ TRAIL_SL_LOCK = 2.0              # % profit to lock when trailing (SL = entry + 
 TRAIL_SL_DISTANCE = 2.0          # SL trails this % below current price
 MIN_PROFIT_TRAILING_TP = 10.0   # % profit to activate trailing TP
 TRAIL_PERCENT = 2.0             # Trail TP by this % when trailing
+
+# ── PARTIAL TP (take profit in stages) ────────────────────────────────────────
+TP1_PERCENT = 5.0               # Close 25% at this % profit
+TP1_CLOSE_PCT = 0.25            # Percentage to close at TP1
+TP2_PERCENT = 10.0              # Close another 25% at this % profit
+TP2_CLOSE_PCT = 0.25            # Percentage to close at TP2
+# Remaining 50% runs to PRICE_TP (15%) or trailing TP
 
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 POST_SIGNALS_TO_TELEGRAM = True
@@ -50,6 +57,12 @@ LLM_MIN_SCORE = 4               # Only analyze candidates with score >= this
 LLM_TEMPERATURE = 0.1           # Low = deterministic
 LLM_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"  # OpenRouter endpoint
 LLM_TIMEOUT = 15                # Seconds before timeout (fail-open)
+
+# ── LLM FALLBACK (Nous Research) ────────────────────────────────────────────
+# Used when OpenRouter is down or returns errors
+LLM_FALLBACK_ENABLED = True
+LLM_FALLBACK_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
+LLM_FALLBACK_MODEL = "xiaomi/mimo-v2-pro"  # Nous hosted — fast, cheap fallback
 
 # ── RISK ─────────────────────────────────────────────────────────────────────
 MAX_MARGIN_PERCENT = 40         # Max margin usage %

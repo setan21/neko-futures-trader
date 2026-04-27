@@ -62,7 +62,7 @@ except NameError:
 try:
     MIN_SCORE_NORMAL
 except NameError:
-    MIN_SCORE_NORMAL = 4
+    MIN_SCORE_NORMAL = 7  # Raised from 4 to 7 (Apr 27)
 
 # Load delisting blocklist
 try:
@@ -123,6 +123,25 @@ def get_positions():
     if r:
         return [p for p in r.json().get('positions', []) if float(p.get('positionAmt', 0)) != 0]
     return []
+
+# === SECTOR MAPPING (Apr 27 - prevent over-concentration) ===
+SECTOR_MAP = {
+    'gaming': ['MANAUSDT', 'SANDUSDT', 'AXSUSDT', 'ENJUSDT', 'IMXUSDT', 'CHZUSDT', 'ALICEUSDT', 'GALUSDT', 'GFTUSDT'],
+    'layer1': ['SOLUSDT', 'ADAUSDT', 'AVAXUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'OPUSDT', 'ATOMUSDT', 'DOTUSDT', 'TIAUSDT'],
+    'defi': ['AAVEUSDT', 'UNIUSDT', 'LINKUSDT', 'CRVUSDT', 'SNXUSDT', 'COMPUSDT', 'MKRUSDT', 'SUSHIUSDT', 'DYDXUSDT', '1INCHUSDT'],
+    'meme': ['DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'FLOKIUSDT', 'BONKUSDT', 'WIFUSDT'],
+    'ai': ['FETUSDT', 'AGIXUSDT', 'RNDR USDT', 'OCEUSDT', 'PHBUSDT'],
+    'storage': ['FILUSDT', 'ARUSDT', 'STORJUSDT'],
+}
+
+def check_sector_exposure(symbol, open_positions):
+    """Prevent opening >1 position in the same sector (diversification)"""
+    for sector, tokens in SECTOR_MAP.items():
+        if symbol in tokens:
+            sector_count = sum(1 for pos in open_positions if pos['symbol'] in tokens)
+            if sector_count >= 1:
+                return False, f"sector_{sector}"
+    return True, None
 
 def cleanup_cache():
     """Clean up old cache entries"""
@@ -1267,6 +1286,19 @@ def analyze_symbol(symbol, stats):
         weekly_close = float(weekly_candles[-1][4])
         weekly_change = ((weekly_close - weekly_open) / weekly_open) * 100
     
+    # Multi-timeframe: 4h trend alignment check
+    r_4h = requests.get(f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=10', timeout=10)
+    h4_candles = r_4h.json()
+    h4_trend = 'NEUTRAL'
+    h4_change = 0
+    h4_green = 0
+    if len(h4_candles) >= 5:
+        h4_closes = [float(c[4]) for c in h4_candles]
+        h4_opens = [float(c[1]) for c in h4_candles]
+        h4_change = ((h4_closes[-1] - h4_closes[0]) / h4_closes[0]) * 100
+        h4_green = sum(1 for i in range(-3, 0) if h4_closes[i] > h4_opens[i])
+        h4_trend = 'BULLISH' if h4_change > 1 else 'BEARISH' if h4_change < -1 else 'NEUTRAL'
+    
     # 2. 1H Momentum (continuation)
     change_1h = ((closes[-1] - closes[-6]) / closes[-6]) * 100 if len(closes) >= 6 else 0
     
@@ -1462,8 +1494,11 @@ def analyze_symbol(symbol, stats):
         if stoch_rsi['k'] < 30: long_score += 1
         # StochRSI Bullish Cross: +1 (%K crosses above %D from below 50)
         if stoch_rsi['k'] > stoch_rsi['d'] and stoch_rsi['prev_k'] < stoch_rsi['d'] and stoch_rsi['k'] < 50: long_score += 1
-        # ADX Strong Trend: +1 (ADX > 25, market is trending)
-        if adx_value > 25: long_score += 1
+        # ADX Strong Trend: +1-2 (ADX > 30=+2, > 25=+1, market trending strength)
+        if adx_value > 30:
+            long_score += 2
+        elif adx_value > 25:
+            long_score += 1
         # +DI > -DI: +1 (bullish directional strength)
         if plus_di > minus_di: long_score += 1
         # Fisher Transform Bullish: +1 (fisher > 0 and rising)
@@ -1510,8 +1545,11 @@ def analyze_symbol(symbol, stats):
         if stoch_rsi['k'] > 70: short_score += 1
         # StochRSI Bearish Cross: +1 (%K crosses below %D from above 50)
         if stoch_rsi['k'] < stoch_rsi['d'] and stoch_rsi['prev_k'] > stoch_rsi['d'] and stoch_rsi['k'] > 50: short_score += 1
-        # ADX Strong Trend: +1 (ADX > 25, market is trending)
-        if adx_value > 25: short_score += 1
+        # ADX Strong Trend: +1-2 (ADX > 30=+2, > 25=+1, market trending strength)
+        if adx_value > 30:
+            short_score += 2
+        elif adx_value > 25:
+            short_score += 1
         # -DI > +DI: +1 (bearish directional strength)
         if minus_di > plus_di: short_score += 1
         # Fisher Transform Bearish: +1 (fisher < 0 and falling)
@@ -1552,13 +1590,13 @@ def analyze_symbol(symbol, stats):
     
     # === DIRECTION FILTERS ===
     # EMA Filter - for LONG, price should be near or below 21EMA (not extended)
-    if direction == "LONG" and ema_position > 70:
-        # Price too extended above ATR bands, likely a chase
-        print(f"(ema_pos={ema_position:.0f}>70)", end=" ", flush=True)
+    if direction == "LONG" and ema_position > 60:
+        # Price too extended above ATR bands, likely a chase - tightened from 70
+        print(f"(ema_pos={ema_position:.0f}>60)", end=" ", flush=True)
         return None
-    if direction == "SHORT" and ema_position < 30:
-        # Price too extended below ATR bands for shorts
-        print(f"(ema_pos={ema_position:.0f}<30)", end=" ", flush=True)
+    if direction == "SHORT" and ema_position < 40:
+        # Price too extended below ATR bands for shorts - tightened from 30
+        print(f"(ema_pos={ema_position:.0f}<40)", end=" ", flush=True)
         return None
     
     # RSI Overbought Filter: reject LONG if RSI > 65 (too late to enter)
@@ -1569,6 +1607,28 @@ def analyze_symbol(symbol, stats):
     # RSI Oversold Filter: reject SHORT if RSI < 35 (too late to short)
     if direction == "SHORT" and rsi_14 < 35:
         print(f"(rsi={rsi_14:.0f}<35)", end=" ", flush=True)
+        return None
+    
+    # Momentum Confirmation: require 2+ green candles before LONG entry
+    if direction == "LONG":
+        green_count = sum(1 for i in range(-2, 0) if closes[i] > opens[i])
+        if green_count < 2:
+            print(f"(green={green_count}<2)", end=" ", flush=True)
+            return None
+    
+    # Momentum Confirmation: require 2+ red candles before SHORT entry
+    if direction == "SHORT":
+        red_count = sum(1 for i in range(-2, 0) if closes[i] < opens[i])
+        if red_count < 2:
+            print(f"(red={red_count}<2)", end=" ", flush=True)
+            return None
+    
+    # Multi-timeframe: 4h trend alignment — reject if 4h trend opposes 1h direction
+    if direction == "LONG" and h4_trend == 'BEARISH':
+        print(f"(4h={h4_trend})", end=" ", flush=True)
+        return None
+    if direction == "SHORT" and h4_trend == 'BULLISH':
+        print(f"(4h={h4_trend})", end=" ", flush=True)
         return None
     
     # Near Recent High Filter: reject LONG if price within 4% of 20-candle high (chasing)
@@ -1759,6 +1819,10 @@ def analyze_symbol(symbol, stats):
         'chop': chop_value,
         'fisher': fisher_val,
         'fisher_prev': fisher_prev,
+        # Multi-timeframe
+        'h4_trend': h4_trend,
+        'h4_change': h4_change,
+        'h4_green': h4_green,
     }
 
 def fetch_brave_news(query, count=2):
@@ -1922,6 +1986,10 @@ def format_signal(analysis, stats):
 • CHOP: {s.get('chop', 50):.1f} {'🔄 Choppy' if s.get('chop', 50) > 60 else '📈 Trending' if s.get('chop', 50) < 40 else '⚖️ Neutral'}
 • Fisher: {s.get('fisher', 0):.3f} {'🟢 Bullish' if s.get('fisher', 0) > 0 else '🔴 Bearish'} {'↑' if s.get('fisher', 0) > s.get('fisher_prev', 0) else '↓'}
 
+📊 MULTI-TIMEFRAME (4H):
+• 4H Trend: {s.get('h4_trend', 'N/A')} ({s.get('h4_change', 0):+.1f}%)
+• 4H Green: {s.get('h4_green', 0)}/3 candles
+
 ⏱️ COOLDOWN: 2h after SL
 • Support: {s['support']:.6f}
 • Resistance: {s['resistance']:.6f}
@@ -2003,6 +2071,9 @@ def main():
     
     print(f"  Found {len(movers)} symbols")
     
+    # Sector rejection tracking
+    sector_rejections = {}
+    
     # Load posted signals (to avoid duplicates)
     try:
         with open('.posted_signals', 'r') as f:
@@ -2070,6 +2141,14 @@ def main():
                     else:
                         reason_short = llm_result['reason'][:60]
                         print(f"  🧠 LLM APPROVED: {reason_short} ({llm_result.get('latency_ms', 0)}ms)")
+                
+                # === SECTOR EXPOSURE CHECK (Apr 27 - diversification) ===
+                sector_ok, sector_reason = check_sector_exposure(symbol, open_pos)
+                if not sector_ok:
+                    print(f"  ⚠️ Skipped: {sector_reason} limit (max 1 per sector)")
+                    # Track sector rejections for summary
+                    sector_rejections[sector_reason] = sector_rejections.get(sector_reason, 0) + 1
+                    continue
 
                 # Calculate quantity with proper floor (not int truncation)
                 trade_amount = (balance * ENTRY_PERCENT / 100) * LEVERAGE
@@ -2152,8 +2231,10 @@ def main():
                         if llm_result and llm_result.get('reason'):
                                 msg += f"\n🧠 AI Check: {llm_result['reason'][:80]}\n"
                                 model_name = llm_result.get('model') or 'N/A'
+                                provider = llm_result.get('provider', '')
                                 conf = llm_result.get('confidence', 0)
-                                msg += f"📊 Model: {model_name} | Conf: {conf:.0%}\n"
+                                provider_tag = f" [{provider}]" if provider else ""
+                                msg += f"📊 Model: {model_name}{provider_tag} | Conf: {conf:.0%}\n"
                         msg += f"\n✅ ORDER PLACED: {analysis['direction']} (LIMIT)\n"
                         msg += f"🎯 Entry: ${entry_price:.6f} (pullback 1%)\n"
                         msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
@@ -2220,6 +2301,10 @@ def main():
             print(f"error: {e}")
     
     print(f"\n✅ Scan complete!")
+    if sector_rejections:
+        total_sector = sum(sector_rejections.values())
+        breakdown = ", ".join(f"{k.replace('sector_', '')}={v}" for k, v in sorted(sector_rejections.items(), key=lambda x: -x[1]))
+        print(f"  📊 Sector rejections: {total_sector} ({breakdown})")
 
 if __name__ == "__main__":
     while True:
