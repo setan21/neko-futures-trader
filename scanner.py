@@ -414,6 +414,52 @@ def get_algo_orders_sapi():
         pass
     return []
 
+def cleanup_orphan_orders():
+    """Cancel SL/TP algo orders for closed positions.
+    
+    If a position is closed but its SL/TP orders still exist,
+    those are orphan orders that waste margin and cause confusion.
+    Call this at the start of each scan cycle.
+    """
+    try:
+        ts = int(time.time() * 1000)
+        params = f'timestamp={ts}'
+        sig = get_signature(params)
+        headers = {'X-MBX-APIKEY': API_KEY}
+        
+        # Get open positions
+        r = requests.get(f'https://fapi.binance.com/fapi/v2/positionRisk?{params}&signature={sig}',
+                        headers=headers, timeout=10)
+        positions = {p['symbol'] for p in r.json() if float(p.get('positionAmt', 0)) != 0}
+        
+        # Get algo orders (SL/TP)
+        ts2 = int(time.time() * 1000)
+        params2 = f'timestamp={ts2}'
+        sig2 = get_signature(params2)
+        r2 = requests.get(f'https://fapi.binance.com/fapi/v1/openAlgoOrders?{params2}&signature={sig2}',
+                         headers=headers, timeout=10)
+        algo_orders = r2.json()
+        
+        if not isinstance(algo_orders, list):
+            return
+        
+        cancelled = 0
+        for o in algo_orders:
+            sym = o.get('symbol', '')
+            algo_id = o.get('algoId', '')
+            if sym not in positions and algo_id:
+                ts3 = int(time.time() * 1000)
+                cancel_params = f'algoId={algo_id}&symbol={sym}&timestamp={ts3}'
+                cancel_sig = get_signature(cancel_params)
+                requests.delete(f'https://fapi.binance.com/fapi/v1/algoOrder?{cancel_params}&signature={cancel_sig}',
+                              headers=headers, timeout=10)
+                cancelled += 1
+        
+        if cancelled > 0:
+            print(f"  🧹 Cleaned {cancelled} orphan SL/TP orders")
+    except Exception as e:
+        print(f"  ⚠️ Orphan cleanup error: {e}")
+
 def check_margin_risk():
     """Check margin and position risk - don't overtrade"""
     ts = int(time.time() * 1000)
@@ -2172,6 +2218,9 @@ def format_signal(analysis, stats):
 # === MAIN ===
 def main():
     print(f"🔍 Scanner v8 Starting...")
+    
+    # Clean up orphan SL/TP orders for closed positions
+    cleanup_orphan_orders()
     
     balance = get_balance()
     positions = get_positions()
