@@ -350,7 +350,8 @@ def cancel_algo_orders(symbol):
     """Cancel all open algo AND regular SL/TP orders for a symbol.
     
     Some positions have algo orders (via /fapi/v1/algoOrder),
-    others have regular orders (via /fapi/v1/order). Cancel both.
+    others have regular orders (via /fapi/v1/order). Cancel both types.
+    Only cancels SL/TP order types, not limit entry orders.
     """
     headers = {'X-MBX-APIKEY': API_KEY}
     cancelled = False
@@ -369,17 +370,28 @@ def cancel_algo_orders(symbol):
     except Exception as e:
         print(f"  ⚠️ Cancel algo orders error for {symbol}: {e}")
     
-    # 2. Cancel regular SL/TP orders via DELETE /fapi/v1/order
+    # 2. Cancel regular SL/TP orders individually (via openOrders query)
     try:
         ts2 = int(time.time() * 1000)
         params2 = f'symbol={symbol}&timestamp={ts2}'
         sig2 = get_sig(params2)
-        r2 = requests.delete(
-            f'https://fapi.binance.com/fapi/v1/allOpenOrders?{params2}&signature={sig2}',
-            headers=headers, timeout=15
+        r2 = requests.get(
+            f'https://fapi.binance.com/fapi/v1/openOrders?{params2}&signature={sig2}',
+            headers=headers, timeout=10
         )
-        if r2.status_code == 200:
-            cancelled = True
+        if r2.status_code == 200 and isinstance(r2.json(), list):
+            for o in r2.json():
+                otype = o.get('type', '')
+                # Only cancel SL/TP orders, NOT limit entry orders
+                if 'STOP' in otype or 'TAKE_PROFIT' in otype:
+                    ts3 = int(time.time() * 1000)
+                    cp = f'symbol={symbol}&orderId={o["orderId"]}&timestamp={ts3}'
+                    cs = get_sig(cp)
+                    requests.delete(
+                        f'https://fapi.binance.com/fapi/v1/order?{cp}&signature={cs}',
+                        headers=headers, timeout=10
+                    )
+                    cancelled = True
     except Exception as e:
         print(f"  ⚠️ Cancel regular orders error for {symbol}: {e}")
     
