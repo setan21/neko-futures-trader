@@ -167,10 +167,11 @@ def cleanup_cache():
         pass
     
     # Clear .posted_signals to allow re-posts
-    try:
-        open('.posted_signals', 'w').close()
-    except:
-        pass
+    # DISABLED: causes duplicate orders when scanner restarts with pending limit orders
+    # try:
+    #     open('.posted_signals', 'w').close()
+    # except:
+    #     pass
 
 # Cleanup on startup
 cleanup_cache()
@@ -2443,8 +2444,14 @@ def main():
                 
                 # Only post if limit order succeeded
                 if limit_order_id:
-                    if symbol in posted:
-                        print(f"  (already posted)")
+                    # Mark as processed immediately to prevent duplicate orders
+                    is_duplicate = symbol in posted
+                    posted.add(symbol)
+                    with open('.posted_signals', 'w') as f:
+                        f.write(','.join(posted))
+                    
+                    if is_duplicate:
+                        print(f"  (already posted/order exists)")
                     else:
                         msg = format_signal(analysis, stats)
                         # Add LLM insight if available
@@ -2509,10 +2516,6 @@ def main():
                             print(f"  Saved SL/TP: SL={sl_price}, TP={tp_price}")
                         except Exception as e:
                             print(f"  Warning: Could not save SL/TP: {e}")
-                        
-                        posted.add(symbol)
-                        with open('.posted_signals', 'w') as f:
-                            f.write(','.join(posted))
                         
                         open_count += 1
                 else:
