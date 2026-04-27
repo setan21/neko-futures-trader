@@ -272,30 +272,42 @@ def get_klines(symbol, interval='1h', limit=100):
     r = requests.get(url, timeout=15)
     return r.json()
 
-def batch_orders(orders):
+def batch_orders(orders, retry=True):
     """Place multiple orders in a single API call (max 5 orders).
     
     POST /fapi/v1/batchOrders
-    Body: batchOrders=[{order1}, {order2}, ...] (JSON array as string)
-    
-    Each order dict needs: symbol, side, type, quantity, and type-specific params.
-    Returns: list of order results.
+    Body (x-www-form-urlencoded): batchOrders=<json>&timestamp=<ts>&signature=<sig>
+    Retries once on signature error with fresh timestamp.
     """
     try:
+        import urllib.parse
         ts = int(time.time() * 1000)
-        headers = {'X-MBX-APIKEY': API_KEY, 'Content-Type': 'application/json'}
+        headers = {'X-MBX-APIKEY': API_KEY, 'Content-Type': 'application/x-www-form-urlencoded'}
         
-        # Build batch params
+        # Build batch JSON — compact for consistent signature
         import json as json_mod
-        batch_json = json_mod.dumps(orders)
-        params_str = f'batchOrders={batch_json}&timestamp={ts}'
-        sig = get_signature(params_str)
+        batch_json = json_mod.dumps(orders, separators=(',', ':'))
         
-        url = f'https://fapi.binance.com/fapi/v1/batchOrders'
-        r = requests.post(url, 
-                         params={'batchOrders': batch_json, 'timestamp': ts, 'signature': sig},
+        # URL-encode the batch JSON for the body
+        encoded_batch = urllib.parse.quote(batch_json, safe='')
+        
+        # Build body and sign the EXACT body string
+        body = f'batchOrders={encoded_batch}&timestamp={ts}'
+        sig = get_signature(body)
+        body_with_sig = f'{body}&signature={sig}'
+        
+        r = requests.post('https://fapi.binance.com/fapi/v1/batchOrders',
+                         data=body_with_sig,
                          headers=headers, timeout=15)
-        return r.json()
+        result = r.json()
+        
+        # Retry once on signature error (timestamp race condition)
+        if isinstance(result, dict) and result.get('code') == -1022 and retry:
+            print(f"  ⚠️ Batch sig error, retrying with fresh timestamp...")
+            time.sleep(0.1)
+            return batch_orders(orders, retry=False)
+        
+        return result
     except Exception as e:
         print(f"  ⚠️ Batch order error: {e}")
         return [{'error': str(e)}]
@@ -1720,34 +1732,32 @@ def analyze_symbol(symbol, stats):
     }
     
     # === DIRECTION FILTERS ===
-    # EMA Filter - for LONG, price should be near or below 21EMA (not extended)
-    # Exception: breakout patterns are allowed even if extended
-    if direction == "LONG" and ema_position > 75 and not breakout:
-        # Price too extended above ATR bands, likely a chase
-        print(f"(ema_pos={ema_position:.0f}>75)", end=" ", flush=True)
+    # EMA Filter - for LONG, reject if price is WAY over-extended above ATR bands
+    # Exception: breakout patterns and strong momentum (>10%) allowed even if extended
+    if direction == "LONG" and ema_position > 80 and not breakout and price_change < 10:
+        print(f"(ema_pos={ema_position:.0f}>80)", end=" ", flush=True)
         return None
-    if direction == "SHORT" and ema_position < 40:
-        # Price too extended below ATR bands for shorts
-        # Exception: if price_change < -5%, strong momentum drop is valid
-        if price_change >= -5:
-            print(f"(ema_pos={ema_position:.0f}<40)", end=" ", flush=True)
-            return None
+    # SHORT: no ema_pos filter — in downtrends, negative ema_pos is normal
+    # The scoring system and other filters already validate quality
     
     # RSI Overbought Filter: reject LONG if RSI > 65 (too late to enter)
     if direction == "LONG" and rsi_14 > 65:
         print(f"(rsi={rsi_14:.0f}>65)", end=" ", flush=True)
         return None
     
-    # RSI Oversold Filter: reject SHORT if RSI < 35 (too late to short)
-    if direction == "SHORT" and rsi_14 < 35:
-        print(f"(rsi={rsi_14:.0f}<35)", end=" ", flush=True)
+    # RSI Oversold Filter: reject SHORT if RSI < 20 (extreme oversold, bounce risk)
+    # RSI 20-35 is FINE for shorts in a crash — that's where profit is
+    if direction == "SHORT" and rsi_14 < 20:
+        print(f"(rsi={rsi_14:.0f}<20)", end=" ", flush=True)
         return None
     
     # Momentum Confirmation: require 2+ green candles before LONG entry
+    # Exception: if price_change > 3%, sudden pump — 1 candle is enough
     if direction == "LONG":
         green_count = sum(1 for i in range(-2, 0) if closes[i] > opens[i])
-        if green_count < 2:
-            print(f"(green={green_count}<2)", end=" ", flush=True)
+        min_green = 1 if price_change > 3 else 2
+        if green_count < min_green:
+            print(f"(green={green_count}<{min_green})", end=" ", flush=True)
             return None
     
     # Momentum Confirmation: require 2+ red candles before SHORT entry
@@ -1863,9 +1873,6 @@ def analyze_symbol(symbol, stats):
         runner_score += 1  # Top traders net long
     elif direction == "SHORT" and top_trader['ratio'] < 0.9:
         runner_score += 1  # Top traders net short
-    if direction == "SHORT" and rsi_oversold:
-        # Don't SHORT when RSI oversold (<30) - too risky  
-        return None
     
     # SL/TP based on percentage (PRICE_SL / PRICE_TP)
     if direction == "LONG":
@@ -2307,7 +2314,7 @@ def main():
                         print(f"  🧠 LLM APPROVED: {reason_short} ({llm_result.get('latency_ms', 0)}ms)")
                 
                 # === SECTOR EXPOSURE CHECK (Apr 27 - diversification) ===
-                sector_ok, sector_reason = check_sector_exposure(symbol, open_pos)
+                sector_ok, sector_reason = check_sector_exposure(symbol, positions)
                 if not sector_ok:
                     print(f"  ⚠️ Skipped: {sector_reason} limit (max 1 per sector)")
                     # Track sector rejections for summary
