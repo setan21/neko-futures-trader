@@ -511,7 +511,7 @@ def send_telegram(msg):
         requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage',
                     data={'chat_id': TELEGRAM_CHANNEL, 'text': msg, 'parse_mode': 'Markdown'})
 
-def check_multi_tp(symbol, side, entry, current, position_amt, original_amt):
+def check_multi_tp(symbol, side, entry, current, position_amt, original_amt, pos_data=None):
     """Check for multi-TP levels and close partial positions.
     
     TP1: Close TP1_CLOSE_PCT (25%) at TP1_PERCENT (5%) profit
@@ -543,7 +543,7 @@ def check_multi_tp(symbol, side, entry, current, position_amt, original_amt):
         if result and 'orderId' in result:
             log_trade(symbol, side, entry, current, close_amt, 
                      (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
-                     'TP2', pos_data if 'pos_data' in dir() else None)
+                     'TP2', pos_data)
             print(f"    📈 TP2 HIT! Closed {tp2_pct*100:.0f}% at +{profit_pct:.2f}%")
             return True
     
@@ -554,7 +554,7 @@ def check_multi_tp(symbol, side, entry, current, position_amt, original_amt):
         if result and 'orderId' in result:
             log_trade(symbol, side, entry, current, close_amt,
                      (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
-                     'TP1', pos_data if 'pos_data' in dir() else None)
+                     'TP1', pos_data)
             print(f"    📈 TP1 HIT! Closed {tp1_pct*100:.0f}% at +{profit_pct:.2f}%")
             return True
     
@@ -619,8 +619,8 @@ def main():
                         headers = {'X-MBX-APIKEY': API_KEY}
                         ts = int(time.time() * 1000)
                         check_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, ts)
-                        check_sig = get_signature(check_params)
-                        check_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(check_params, check_sig)
+                        check_sig = get_sig(check_params)
+                        check_url = f"https://fapi.binance.com/fapi/v1/order?{check_params}&signature={check_sig}"
                         try:
                             check_r = requests.get(check_url, headers=headers, timeout=10)
                             order_status = check_r.json()
@@ -639,15 +639,15 @@ def main():
                                     place_sl_tp_only(symbol, pos_data.get('side', 'LONG'), float(order_status.get('origQty', 0)), float(sl_price_save), float(tp_price_save))
                                 # Save updated data
                                 saved_data[symbol] = pos_data
-                                with open(positions_file, 'w') as f:
+                                with open(POSITIONS_FILE, 'w') as f:
                                     json.dump(saved_data, f)
                                 # Continue to normal monitoring
                             elif age_minutes > 5:
                                 # 5 min timeout — cancel unfilled order
                                 cancel_ts = int(time.time() * 1000)
                                 cancel_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, cancel_ts)
-                                cancel_sig = get_signature(cancel_params)
-                                cancel_url = "https://fapi.binance.com/fapi/v1/order?{}&signature={}".format(cancel_params, cancel_sig)
+                                cancel_sig = get_sig(cancel_params)
+                                cancel_url = f"https://fapi.binance.com/fapi/v1/order?{cancel_params}&signature={cancel_sig}"
                                 try:
                                     requests.delete(cancel_url, headers=headers, timeout=10)
                                     print(f"  {symbol}: 🧹 Limit order cancelled (5min timeout)")
@@ -655,7 +655,7 @@ def main():
                                     pass
                                 # Remove from saved
                                 del saved_data[symbol]
-                                with open(positions_file, 'w') as f:
+                                with open(POSITIONS_FILE, 'w') as f:
                                     json.dump(saved_data, f)
                                 continue
                             else:
@@ -679,8 +679,13 @@ def main():
                     continue
                 
                 # Check for Multi-TP levels (partial closes)
-                original_amt = abs(amt)  # Store original amount for Multi-TP calculation
-                check_multi_tp(symbol, side, entry, current, amt, original_amt)
+                # Store original amount in pos_data so it persists across iterations
+                if 'original_amt' not in pos_data:
+                    pos_data['original_amt'] = abs(amt)
+                    saved_data[symbol] = pos_data
+                    save_positions_sl_tp(saved_data)
+                original_amt = pos_data.get('original_amt', abs(amt))
+                check_multi_tp(symbol, side, entry, current, amt, original_amt, pos_data)
                 
                 # Check for trailing TP - activate when profit > configured %
                 try:
