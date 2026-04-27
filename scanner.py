@@ -527,12 +527,12 @@ def place_order(symbol, side, quantity):
     return r.json()
 
 
-def place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, entry_price):
-    """Place LIMIT entry + SL + TP in a single batch API call.
+def place_market_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
+    """Place MARKET entry + SL + TP in a single batch API call.
     
     Uses POST /fapi/v1/batchOrders to place all 3 orders atomically.
-    SL/TP are STOP_MARKET/TAKE_PROFIT_MARKET algo orders with reduceOnly.
-    Max latency reduction: 3 HTTP calls → 1.
+    Entry is MARKET (immediate fill), SL/TP are STOP_MARKET/TAKE_PROFIT_MARKET algo orders.
+    Replaces old limit order system that caused order spam.
     """
     headers = {'X-MBX-APIKEY': API_KEY}
     ts = int(time.time() * 1000)
@@ -568,7 +568,6 @@ def place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, ent
         rounded = steps * step
         return float(f"{rounded:.{decimals}f}")
     
-    entry_rounded = round_to_tick(entry_price, tick_size)
     sl_rounded = round_to_tick(sl_price, tick_size) if sl_price else None
     tp_rounded = round_to_tick(tp_price, tick_size) if tp_price else None
     qty_rounded = round_qty(quantity, step_size)
@@ -577,14 +576,12 @@ def place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, ent
     # Build batch orders array
     orders = []
     
-    # 1. LIMIT entry order
+    # 1. MARKET entry order (immediate fill, no spam)
     orders.append({
         'symbol': symbol,
         'side': side,
-        'type': 'LIMIT',
-        'timeInForce': 'GTC',
+        'type': 'MARKET',
         'quantity': str(qty_rounded),
-        'price': str(entry_rounded),
     })
     
     # 2. STOP_MARKET (SL) - algo order
@@ -620,13 +617,10 @@ def place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, ent
         
         order_id = entry_result.get('orderId')
         if order_id:
-            print(f"  📦 Batch placed: LIMIT={entry_rounded} SL={sl_rounded} TP={tp_rounded} qty={qty_rounded}")
+            print(f"  📦 Batch placed: MARKET SL={sl_rounded} TP={tp_rounded} qty={qty_rounded}")
             return {
                 'orderId': order_id,
-                'limit_order_id': order_id,
-                'limit_price': entry_rounded,
-                'limit_placed_at': ts,
-                'status': entry_result.get('status', 'NEW'),
+                'status': entry_result.get('status', 'FILLED'),
                 'sl_order_id': sl_result.get('orderId'),
                 'tp_order_id': tp_result.get('orderId'),
                 'batch': True,
@@ -2426,24 +2420,14 @@ def main():
                 sl_price = analysis.get('sl')
                 tp_price = analysis.get('tp1')
                 
-                # Calculate pullback entry price (limit order)
-                # For LONG: 1% below current (wait for pullback)
-                # For SHORT: 1% above current (wait for bounce)
-                current_price = analysis['current']
-                if analysis['direction'] == "LONG":
-                    entry_price = current_price * 0.99  # 1% below
-                else:
-                    entry_price = current_price * 1.01  # 1% above
-                
-                # Place LIMIT order with SL/TP
-                result = place_limit_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price, entry_price)
+                # Place MARKET order with SL/TP (no more limit order spam)
+                result = place_market_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price)
                 
                 order_id = result.get('orderId', 'N/A')
-                limit_order_id = result.get('limit_order_id')
                 status = result.get('status', 'UNKNOWN')
                 
-                # Only post if limit order succeeded
-                if limit_order_id:
+                # Only post if order succeeded
+                if order_id and order_id != 'N/A':
                     # Mark as processed immediately to prevent duplicate orders
                     is_duplicate = symbol in posted
                     posted.add(symbol)
@@ -2462,14 +2446,14 @@ def main():
                                 conf = llm_result.get('confidence', 0)
                                 provider_tag = f" [{provider}]" if provider else ""
                                 msg += f"📊 Model: {model_name}{provider_tag} | Conf: {conf:.0%}\n"
-                        msg += f"\n✅ ORDER PLACED: {analysis['direction']} (BATCH)\n"
-                        msg += f"🎯 Entry: ${entry_price:.6f} (pullback 1%)\n"
+                        current_price = analysis['current']
+                        msg += f"\n✅ ORDER PLACED: {analysis['direction']} (MARKET)\n"
+                        msg += f"🎯 Entry: ${current_price:.6f} (market)\n"
                         msg += f"🛡 SL: ${analysis['sl']:.6f}\n"
                         msg += f"📈 TP: ${analysis['tp1']:.6f}\n"
-                        msg += f"📋 Limit ID: {limit_order_id}"
                         if result.get('batch'):
-                            msg += f" | SL ID: {result.get('sl_order_id', 'N/A')} | TP ID: {result.get('tp_order_id', 'N/A')}"
-                        msg += f" | Status: NEW"
+                            msg += f"📋 SL ID: {result.get('sl_order_id', 'N/A')} | TP ID: {result.get('tp_order_id', 'N/A')}"
+                        msg += f" | Status: FILLED"
                         
                         send_telegram(msg)
                         print(f"  Order: {order_id} | Posted to Telegram")
@@ -2482,14 +2466,11 @@ def main():
                                 with open(positions_file, 'r') as f:
                                     positions_data = json.load(f)
                             positions_data[symbol] = {
-                                'entry': entry_price,  # Limit order price
+                                'entry': current_price,
                                 'sl': analysis['sl'],
                                 'tp1': analysis['tp1'],
                                 'side': side,
                                 'opened_at': datetime.now().isoformat(),
-                                'limit_order_id': limit_order_id,
-                                'limit_status': 'PENDING',
-                                'limit_placed_at': int(time.time() * 1000),
                                 # === Indicator scores at entry (for trade correlation analysis) ===
                                 'signal_score': analysis.get('runner_score', 0),
                                 'signal_rsi': analysis.get('rsi', 50),

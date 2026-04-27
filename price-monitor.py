@@ -688,67 +688,6 @@ def main():
                 # Get SL/TP from saved data, or calculate from ATR
                 pos_data = saved_data.get(symbol, {})
                 
-                # === LIMIT ORDER HANDLING ===
-                # Check if this is a pending limit order (not yet filled)
-                if pos_data and pos_data.get('limit_status') == 'PENDING':
-                    limit_id = pos_data.get('limit_order_id')
-                    placed_at = pos_data.get('limit_placed_at', 0)
-                    now_ms = int(time.time() * 1000)
-                    age_minutes = (now_ms - placed_at) / 60000
-                    
-                    if limit_id:
-                        # Check order status
-                        headers = {'X-MBX-APIKEY': API_KEY}
-                        ts = int(time.time() * 1000)
-                        check_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, ts)
-                        check_sig = get_sig(check_params)
-                        check_url = f"https://fapi.binance.com/fapi/v1/order?{check_params}&signature={check_sig}"
-                        try:
-                            check_r = requests.get(check_url, headers=headers, timeout=10)
-                            order_status = check_r.json()
-                            status = order_status.get('status', '')
-                            
-                            if status == 'FILLED':
-                                # Limit order filled! Update entry and place SL/TP
-                                exec_price = float(order_status.get('avgPrice', pos_data.get('entry', 0)))
-                                print(f"  {symbol}: ✅ LIMIT FILLED at {exec_price:.6f}")
-                                pos_data['entry'] = exec_price
-                                pos_data['limit_status'] = 'FILLED'
-                                # Place SL/TP
-                                sl_price_save = pos_data.get('sl')
-                                tp_price_save = pos_data.get('tp1')
-                                if sl_price_save and tp_price_save:
-                                    place_sl_tp_only(symbol, pos_data.get('side', 'LONG'), float(order_status.get('origQty', 0)), float(sl_price_save), float(tp_price_save))
-                                # Save updated data
-                                saved_data[symbol] = pos_data
-                                with open(POSITIONS_FILE, 'w') as f:
-                                    json.dump(saved_data, f)
-                                # Continue to normal monitoring
-                            elif age_minutes > 5:
-                                # 5 min timeout — cancel unfilled order
-                                cancel_ts = int(time.time() * 1000)
-                                cancel_params = "symbol={}&orderId={}&timestamp={}".format(symbol, limit_id, cancel_ts)
-                                cancel_sig = get_sig(cancel_params)
-                                cancel_url = f"https://fapi.binance.com/fapi/v1/order?{cancel_params}&signature={cancel_sig}"
-                                try:
-                                    requests.delete(cancel_url, headers=headers, timeout=10)
-                                    print(f"  {symbol}: 🧹 Limit order cancelled (5min timeout)")
-                                except:
-                                    pass
-                                # Remove from saved
-                                del saved_data[symbol]
-                                with open(POSITIONS_FILE, 'w') as f:
-                                    json.dump(saved_data, f)
-                                continue
-                            else:
-                                print(f"  {symbol}: ⏳ Limit order {status} ({age_minutes:.1f}min)")
-                                continue  # Skip monitoring until filled
-                        except Exception as e:
-                            print(f"  {symbol}: ⚠️ Check limit order error: {e}")
-                            continue
-                    else:
-                        continue
-                
                 if pos_data and 'sl' in pos_data and 'tp1' in pos_data:
                     # Use saved SL/TP from scanner
                     sl_price = float(pos_data['sl'])
