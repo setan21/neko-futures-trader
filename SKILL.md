@@ -30,23 +30,29 @@ Trigger when user mentions:
 
 ```
 neko-futures-trader/
-├── scanner.py                 # Scanner (5min intervals)
-├── price-monitor.py           # SL/TP monitor (1sec)
+├── scanner.py                 # Main scanner (5min intervals)
+├── price-monitor.py           # SL/TP monitor (1sec intervals)
 ├── position_command.py        # Position checker
-├── dashboard_api.py           # Dashboard API
-├── emergency_close.py         # Emergency closer
-├── daily_eval.py              # Daily evaluation
-├── backtester.py              # Monte Carlo backtesting
-├── config.py                 # Trading parameters
-├── llm_analyzer.py           # LLM second opinion gate (hybrid AI)
-├── lib/                      # Helper modules
+├── position-monitor.py        # Position monitor helper
+├── dashboard_api.py           # Dashboard API server
+├── config.py                  # Trading parameters
+├── llm_analyzer.py            # LLM analyzer (disabled by default, 3-tier fallback)
+├── lib/                       # Helper modules
 │   ├── signal_filter.py
 │   ├── ict_indicators.py
 │   ├── advanced_analysis.py
 │   ├── delisting_monitor.py
 │   └── error_handling.py
-└── static/
-    └── neko-light.html       # Dashboard UI
+├── scripts/
+│   ├── dashboard_api.py       # API server
+│   ├── backtester.py          # Backtesting engine
+│   ├── analyze_trades.py      # Trade analysis
+│   └── check_balance.py       # Balance checker
+├── static/
+│   └── neko-light.html        # Dashboard UI
+├── .gitignore
+├── SKILL.md
+└── README.md
 ```
 
 ---
@@ -71,8 +77,9 @@ BINANCE_API_KEY=***
 BINANCE_SECRET=***
 TELEGRAM_BOT_TOKEN=***
 TELEGRAM_CHANNEL=your_user_id
-OPENROUTER_API_KEY=sk-or-v1-***  # For LLM analyzer (optional, fail-open if missing)
 ```
+
+> ⚠️ **Important:** Env var is `BINANCE_SECRET` (NOT `BINANCE_API_SECRET`)
 
 ### 4. Workspace Setup
 ```bash
@@ -178,66 +185,93 @@ Access at: `https://YOUR_IP:8443/neko-light.html`
 | Indicator | Score | Description |
 |-----------|-------|-------------|
 | Volume Spike | +2 | >3x average volume |
-| Price Change | +1 to +2 | >5% or >10% change |
+| Price Change | +2 | >3% price change |
 | OI Change | +2 | >20% open interest change |
 | Weekly Change | +1 to +2 | >5% or >20% weekly change |
+| EMA Position | Filter | Price must be near/below 21EMA |
 
 ### Filters (Reject Signals)
 
 | Filter | Condition | Action |
 |--------|-----------|--------|
-| RSI | LONG when RSI > 70 | Reject LONG |
-| RSI | SHORT when RSI < 30 | Reject SHORT |
+| RSI | LONG when RSI > 70 | Reject LONG (overbought) |
+| RSI | LONG when RSI < 30 | Reject LONG (oversold) |
+| RSI | SHORT when RSI < 30 | Reject SHORT (oversold) |
 | MACD Histogram | Contradicts direction | Reject |
 | Bollinger Squeeze | No squeeze + weak move | Reject (chop) |
 | EMA Extended | Price too extended | Reject (chase) |
+| Anti-Chase | Recent entry within 24h | Skip re-entry |
 
 ### Removed (Poor Accuracy)
 
 - ❌ Breakout/Breakdown
 - ❌ Pocket Pivot
+- ❌ Batch orders (using MARKET + separate SL/TP instead)
 
 ---
 
-## 🧠 Hybrid AI Gate (LLM Analyzer)
+## 🧠 LLM Analyzer (Hybrid AI Gate)
 
-The scanner uses a **hybrid architecture**: rule-based indicators for fast filtering, then an LLM second opinion before execution.
+The scanner has an optional LLM second opinion layer. **Currently DISABLED** — LLM was rejecting 98.5% of valid signals.
 
-### How it Works
+### Status: DISABLED
+```python
+LLM_ENABLED = False  # Set True in config.py to re-enable
+```
+
+### How it Works (when enabled)
 ```
 Scanner (rule-based, 14 indicators) → Score ≥ 6
         ↓
-  LLM Analyzer (gpt-4o-mini via OpenRouter)
+  LLM Analyzer (3-tier fallback)
         ↓
   [YES] → Execute order with SL/TP
   [NO]  → Skip signal
 ```
 
+### 3-Tier Fallback Chain
+```
+1. Nous Primary (xiaomi/mimo-v2-pro)
+   → https://inference-api.nousresearch.com/v1/chat/completions
+   ↓ (on failure)
+2. OpenRouter (hermes-4-70b)
+   → https://openrouter.ai/api/v1/chat/completions
+   ↓ (on failure)
+3. MiniMax (MiniMax-M2.5)
+   → https://api.minimaxi.chat/v1/chat/completions
+```
+
 ### Config (`config.py`)
 ```python
-LLM_ENABLED = True              # Toggle on/off
-LLM_MODEL = "openai/gpt-4o-mini"  # Cheap, fast model
-LLM_MIN_SCORE = 6               # Only analyze score ≥ 6
-LLM_TEMPERATURE = 0.1           # Low = deterministic
-LLM_TIMEOUT = 15                # Seconds, then fail-open
+LLM_ENABLED = False                    # Disabled — too many false rejections
+LLM_MODEL = "xiaomi/mimo-v2-pro"       # Nous primary
+LLM_MIN_SCORE = 4                      # Only analyze score ≥ 4
+LLM_TEMPERATURE = 0.1                  # Low = deterministic
+LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
+LLM_TIMEOUT = 15                       # Seconds, then fail-open
+
+# Fallback 1: OpenRouter
+LLM_FALLBACK1_ENABLED = True
+LLM_FALLBACK1_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+LLM_FALLBACK1_MODEL = "nousresearch/hermes-4-70b"
+
+# Fallback 2: MiniMax
+LLM_FALLBACK2_ENABLED = True
+LLM_FALLBACK2_BASE_URL = "https://api.minimaxi.chat/v1/chat/completions"
+LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
 ```
 
 ### Key Design Decisions
 - **Fail-open**: If LLM is down/timeout/error → trade still executes. No missed trades.
 - **Cache**: 5-min TTL per symbol+direction+score. Repeated signals don't re-call LLM.
-- **Cost**: ~$0.0001/trade with gpt-4o-mini. Basically free.
-- **Prompt**: Asks about momentum alignment, RSI zone, SL reasonableness, red flags.
+- **Prompt**: Asks about momentum alignment, RSI zone (30-65 acceptable for LONG), SL reasonableness, red flags.
 - **Telegram**: LLM reasoning included in trade notifications.
 
 ### `llm_analyzer.py` Functions
-- `analyze_signal(analysis)` — Main entry. Returns `{approved, reason, confidence, model, latency_ms, tokens_*}`
+- `analyze_signal(analysis)` — Main entry. Returns `{approved, reason, confidence, model, latency_ms}`
 - `format_analysis_prompt(analysis)` — Builds concise prompt from indicator dict
-- `call_llm(prompt)` — OpenRouter API call with timeout
+- `call_llm(prompt, model, timeout)` — Multi-provider API call with fallback chain
 - `parse_llm_response(content)` — JSON parser with markdown fallback
-
-### Requirements
-- `OPENROUTER_API_KEY` in `.env` (optional — fail-open if missing)
-- `pip install requests` (already a dependency)
 
 ---
 
@@ -245,10 +279,15 @@ LLM_TIMEOUT = 15                # Seconds, then fail-open
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| MAX_POSITIONS | 5 | Max open positions |
-| MAX_MARGIN | 30% | Max margin usage |
+| MAX_POSITIONS | 8 | Max open positions (NORMAL mode) |
+| MAX_POSITIONS_SLEEP | 4 | Max positions in SLEEP mode |
+| MAX_MARGIN_PERCENT | 40% | Max margin usage |
+| MAX_RISK_PERCENT | 1.5% | Max risk per trade |
 | LEVERAGE | 10x | Leverage |
-| MIN_SCORE | 3 | Signal threshold |
+| MIN_SCORE_NORMAL | 6 | Signal threshold (NORMAL mode) |
+| MIN_SCORE_SLEEP | 7 | Signal threshold (SLEEP mode) |
+| MIN_PRICE_CHANGE | 3.0% | Min price change for signal |
+| SCAN_INTERVAL | 300s | Scanner interval (5 min) |
 
 ### R:R Ratio 1:3
 
@@ -260,13 +299,27 @@ LLM_TIMEOUT = 15                # Seconds, then fail-open
 
 ---
 
-## 🐛 Bug Fixes
+## 🐛 Bug Fixes Applied
 
-1. **Algo API:** `/fapi/v1/algoOrder`
+1. **Algo API:** `/fapi/v1/algoOrder` endpoint
 2. **Params:** `algoType=CONDITIONAL`, `quantity=1`, `reduceOnly=true`
 3. **Precision:** Rounds to tickSize per symbol
 4. **Floating point:** String formatting for SL/TP prices
 5. **Income API:** Use `/fapi/v1/income` for accurate winrate
+6. **Anti-chase:** 24h cooldown prevents re-entry on same symbol
+7. **Order type:** MARKET orders + separate SL/TP (batch orders removed)
+
+---
+
+## 📝 Changelog
+
+### 2026-05-06
+- **BREAKING:** LLM analyzer disabled — was rejecting 98.5% of valid signals
+- RSI acceptance range widened for LONG: 30-65 (was 30-60)
+- `MIN_PRICE_CHANGE` raised from 2.0% to 3.0% (filter noise)
+- Removed unused functions: `batch_orders`, `place_order_with_sl_tp`
+- Switched to MARKET orders + separate SL/TP (no batch)
+- Untracked `.positions_sl_tp.json` from git
 
 ---
 
