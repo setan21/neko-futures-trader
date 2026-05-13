@@ -57,6 +57,26 @@ try:
 except ImportError:
     _DYNAMIC_AVAILABLE = False
 
+# TradFi symbol detection
+TRADIFI_STOCKS = {
+    'TSLA','NVDA','AAPL','AMZN','GOOGL','META','MSFT','AMD','COIN','MSTR',
+    'HOOD','CRCL','PLTR','BABA','INTC','TSM','AVGO','QCOM','MU','BILL',
+    'SNDK','EWY','EWJ','USAR','PAYP','BB','BA','NFLX','DIS','PYPL','SQ',
+    'UBER','ABNB','SHOP','RIVN','SOFI','ARM','SMCI','MRVL','LRCX','KLAC',
+    'SNAP','PINS','RBLX','NET','DDOG','SNOW','PANW','CRWD','TEAM','NOW',
+    'WDAY','TTD','MELI','SE','GRAB','CPNG','LI','NIO','XPEV','LCID',
+    'GME','AMC','NKLA','DJT','ROKU','TTWO','EA','SONY','WMT','JPM',
+    'GS','V','MA','BAC','F','GM','RACE','HON','CAT','DE','UNH','JNJ',
+    'PFE','MRK','ABBV','LLY','COST','HD','NKE','SBUX','MCD','PEP','KO',
+}
+TRADIFI_COMMODITIES = {'XAU','XAG','XPT','XPD','CL','NATGAS','COPPER','BZ'}
+TRADIFI_INDICES = {'QQQ','SPY','DIA','IWM','BTCDOM','ALL'}
+
+def is_tradfi(symbol):
+    """Check if symbol is TradFi (stock, commodity, index)"""
+    base = symbol.replace('USDT', '')
+    return base in TRADIFI_STOCKS or base in TRADIFI_COMMODITIES or base in TRADIFI_INDICES
+
 # Default SLEEP_MODE if not defined
 try:
     SLEEP_MODE
@@ -1242,6 +1262,11 @@ def analyze_symbol(symbol, stats):
     stat = stats.get(symbol, {})
     price_change = float(stat.get('priceChangePercent', 0))
     
+    # TradFi detection — use relaxed thresholds
+    _is_tradfi = is_tradfi(symbol)
+    _chase_limit = 10.0 if _is_tradfi else 6.0   # Stocks can trend more
+    _macd_flat_threshold = 0.001 if _is_tradfi else 0.005  # TradFi often has flatter MACD
+    
     # Get candles first to check volume/momentum
     candles = get_klines(symbol, '1h', 50)
     if not candles or len(candles) < 20:
@@ -1447,8 +1472,9 @@ def analyze_symbol(symbol, stats):
         wma_10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else closes[-1]
         wma_30 = sum(closes[-30:]) / 30 if len(closes) >= 30 else closes[-1]
         if current > sma_50 and wma_10 > wma_30: long_score += 1
-        # EMA Position: +1 (<50)
-        if 0 <= ema_position <= 100 and ema_position < 50: long_score += 1
+        # EMA Position: +1 (<50) — TradFi uses <75 (stocks trend higher)
+        _ema_limit = 75 if _is_tradfi else 50
+        if 0 <= ema_position <= 100 and ema_position < _ema_limit: long_score += 1
         # RSI Signal: +1 (oversold <30)
         if rsi_14 < 30: long_score += 1
         # Price > VWAP: +1
@@ -1481,13 +1507,19 @@ def analyze_symbol(symbol, stats):
         # Prevents high-scoring coins from bypassing momentum exhaustion
         # Tightened 2026-05-11: entries at RSI 65+ were still passing through
         # Tightened 2026-05-12: BCH entered at RSI 66.9, AAVE at 62.3, GRT at 61.8
-        if rsi_14 > 60:
-            long_score -= 2
-        elif rsi_14 > 55:
-            long_score -= 1
+        # 2026-05-13: TradFi uses lighter penalty — stocks can sustain elevated RSI
+        if _is_tradfi:
+            if rsi_14 > 65:
+                long_score -= 1
+        else:
+            if rsi_14 > 60:
+                long_score -= 2
+            elif rsi_14 > 55:
+                long_score -= 1
         # MACD Flat Penalty: reject momentum-less entries (GRT had histogram=0.0000)
         # 2026-05-13: If price pumped >3% but MACD is flat, it's a fake move — hard reject
-        if histogram is not None and abs(histogram) < 0.005:
+        # 2026-05-13: TradFi uses relaxed threshold (0.001 vs 0.005) — stocks have flatter MACD
+        if histogram is not None and abs(histogram) < _macd_flat_threshold:
             if price_change > 3:
                 print(f"(macd_flat={histogram:.4f}+pump)", end=" ", flush=True)
                 return None
@@ -1552,6 +1584,10 @@ def analyze_symbol(symbol, stats):
     else:
         min_score = MIN_SCORE_NORMAL
     
+    # TradFi uses lower min score (6 vs 7) — stocks have different dynamics
+    if _is_tradfi and min_score > 6:
+        min_score = 6
+    
     # Must have at least MIN_SCORE
     if runner_score < min_score:
         print(f"(score={runner_score}/{min_score})", end=" ", flush=True)
@@ -1565,17 +1601,20 @@ def analyze_symbol(symbol, stats):
     # Anti-Chasing Filter: reject if 4h price change is extreme (>6% LONG, <-6% SHORT)
     # Entering after a 6%+ move is chasing — wait for pullback
     # 2026-05-13: Tightened from 8% — GRT (5.6%) and KAVA (5.8%) were chase entries that went negative
-    if direction == "LONG" and price_change > 6:
-        print(f"(chase_long={price_change:.1f}%>6%)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 10% limit — stocks can trend stronger
+    if direction == "LONG" and price_change > _chase_limit:
+        print(f"(chase_long={price_change:.1f}%>{_chase_limit:.0f}%)", end=" ", flush=True)
         return None
-    if direction == "SHORT" and price_change < -6:
-        print(f"(chase_short={price_change:.1f}%<-6%)", end=" ", flush=True)
+    if direction == "SHORT" and price_change < -_chase_limit:
+        print(f"(chase_short={price_change:.1f}%)", end=" ", flush=True)
         return None
     
     # Hard RSI reject: never enter LONG with RSI > 68 (momentum exhaustion guaranteed)
     # 2026-05-12: BCH entered at RSI 66.9, now -3.75%. Hard cutoff prevents this.
-    if direction == "LONG" and rsi_14 > 68:
-        print(f"(rsi={rsi_14:.1f}>68)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 75 — stocks can sustain higher RSI
+    _rsi_limit = 75 if _is_tradfi else 68
+    if direction == "LONG" and rsi_14 > _rsi_limit:
+        print(f"(rsi={rsi_14:.1f}>{_rsi_limit})", end=" ", flush=True)
         return None
     
     # Debug: log score breakdown for analysis
@@ -1594,21 +1633,27 @@ def analyze_symbol(symbol, stats):
     # === DIRECTION FILTERS ===
     # EMA Filter - for LONG, reject if price is WAY over-extended above ATR bands
     # Exception: breakout patterns and strong momentum (>10%) allowed even if extended
-    if direction == "LONG" and ema_position > 65 and not breakout and price_change < 5:
-        print(f"(ema_pos={ema_position:.0f}>65)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 80 — stocks trend higher in ATR bands
+    _ema_pos_limit = 80 if _is_tradfi else 65
+    if direction == "LONG" and ema_position > _ema_pos_limit and not breakout and price_change < 5:
+        print(f"(ema_pos={ema_position:.0f}>{_ema_pos_limit})", end=" ", flush=True)
         return None
     # SHORT: no ema_pos filter — in downtrends, negative ema_pos is normal
     # The scoring system and other filters already validate quality
     
     # RSI Overbought Filter: reject LONG if RSI > 62 (tightened from 65 — avoid chasing mature momentum)
     # 2026-05-13: KAVA entered at RSI 64.8, now -1.82%. 62 catches late-stage pumps earlier.
-    if direction == "LONG" and rsi_14 > 62:
-        print(f"(rsi={rsi_14:.0f}>62)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 70 — stocks can sustain higher RSI
+    _rsi_overbought = 70 if _is_tradfi else 62
+    if direction == "LONG" and rsi_14 > _rsi_overbought:
+        print(f"(rsi={rsi_14:.0f}>{_rsi_overbought})", end=" ", flush=True)
         return None
     
     # StochRSI Overbought Filter: reject LONG if StochRSI %K > 80 (extreme overbought)
-    if direction == "LONG" and stoch_rsi['k'] > 80:
-        print(f"(stoch_k={stoch_rsi['k']:.0f}>80)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 90 — stocks can sustain overbought StochRSI
+    _stoch_limit = 90 if _is_tradfi else 80
+    if direction == "LONG" and stoch_rsi['k'] > _stoch_limit:
+        print(f"(stoch_k={stoch_rsi['k']:.0f}>{_stoch_limit})", end=" ", flush=True)
         return None
     
     # RSI Oversold Filter: reject SHORT if RSI < 20 (extreme oversold, bounce risk)
@@ -1646,9 +1691,11 @@ def analyze_symbol(symbol, stats):
     # Near Recent High Filter: reject LONG if price within 3% of 20-candle high (chasing)
     # Exception: if price_change > 7%, strong breakout confirmed by volume (not just a pump)
     # 2026-05-13: Raised exception from 5% to 7% — 5-6% pumps were false "breakout" signals
+    # 2026-05-13: TradFi uses 5% proximity — stocks can stay near highs while trending
     if direction == "LONG":
+        _near_high_pct = 0.95 if _is_tradfi else 0.97
         recent_high = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-        if current >= recent_high * 0.97 and price_change < 7:
+        if current >= recent_high * _near_high_pct and price_change < 7:
             distance_pct = ((recent_high - current) / current) * 100
             print(f"(near_high:{distance_pct:.1f}%)", end=" ", flush=True)
             return None
@@ -1656,13 +1703,15 @@ def analyze_symbol(symbol, stats):
     # Position Range Filter (2026-05-11): reject LONG if price >70% of 30-period range
     # Prevents chasing entries in upper portion of the range — wait for pullback
     # Exception: if price_change > 7%, strong breakout (raised from 5% on 2026-05-13)
+    # 2026-05-13: TradFi uses 85% — stocks can stay in upper range while trending
     if direction == "LONG" and len(closes) >= 30:
+        _range_limit = 85 if _is_tradfi else 70
         range_30_high = max(highs[-30:])
         range_30_low = min(lows[-30:])
         if range_30_high > range_30_low:
             range_position = ((current - range_30_low) / (range_30_high - range_30_low)) * 100
-            if range_position > 70 and price_change < 7:
-                print(f"(range_pos:{range_position:.0f}%>70%)", end=" ", flush=True)
+            if range_position > _range_limit and price_change < 7:
+                print(f"(range_pos:{range_position:.0f}%>{_range_limit}%)", end=" ", flush=True)
                 return None
     
     # Near Recent Low Filter: reject SHORT if price within 3% of 20-candle low (chasing bottom)
@@ -1687,8 +1736,10 @@ def analyze_symbol(symbol, stats):
             return None
     
     # ADX Filter: reject if market is not trending (ADX < 20)
-    if adx_value < 20:
-        print(f"(adx={adx_value:.0f}<20)", end=" ", flush=True)
+    # 2026-05-13: TradFi uses 15 — stocks can trend with lower ADX
+    _adx_min = 15 if _is_tradfi else 20
+    if adx_value < _adx_min:
+        print(f"(adx={adx_value:.0f}<{_adx_min})", end=" ", flush=True)
         return None
     
     # ADX Maturity Filter: reject LONG if ADX > 55 (trend too mature, exhaustion risk)
