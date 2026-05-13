@@ -22,6 +22,8 @@ BYPASS_VOLUME_FILTER = {           # Always include these regardless of volume
     'SEIUSDT', 'TIAUSDT', 'AAVEUSDT', 'MKRUSDT',
     # Stock indices
     'QQQUSDT', 'SPYUSDT',
+    # Crypto indices
+    'BTCDOMUSDT', 'ALLUSDT',
     # Precious metals
     'XAUUSDT', 'XAGUSDT', 'XPTUSDT', 'XPDUSDT',
 }
@@ -182,7 +184,7 @@ def get_stats() -> dict:
         'BILL', 'EWY', 'EWJ', 'USAR', 'SNDK',
     }
     COMMODITY_KEYWORDS = {'XAU', 'XAG', 'XPT', 'XPD', 'CL', 'NATGAS', 'COPPER', 'BZ'}
-    INDEX_KEYWORDS = {'QQQ', 'SPY', 'DIA', 'IWM'}
+    INDEX_KEYWORDS = {'QQQ', 'SPY', 'DIA', 'IWM', 'BTCDOM', 'ALL'}
 
     for sym in sorted(coins):
         base = sym.replace('USDT', '')
