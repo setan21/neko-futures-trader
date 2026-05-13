@@ -50,6 +50,13 @@ try:
 except ImportError:
     pass
 
+# === DYNAMIC COIN LIST ===
+try:
+    from dynamic_coins import get_coins as _get_dynamic_coins, refresh_coins as _refresh_coins
+    _DYNAMIC_AVAILABLE = True
+except ImportError:
+    _DYNAMIC_AVAILABLE = False
+
 # Default SLEEP_MODE if not defined
 try:
     SLEEP_MODE
@@ -2157,8 +2164,12 @@ def main():
     except:
         pass
     
-    # Only check safe coins
-    movers_filtered = [(s, p) for s, p in movers if s in SAFE_COINS]
+    # Only check safe coins (dynamic or static)
+    if DYNAMIC_COINS_ENABLED and _DYNAMIC_AVAILABLE:
+        active_coins = _get_dynamic_coins()
+    else:
+        active_coins = set(SAFE_COINS)
+    movers_filtered = [(s, p) for s, p in movers if s in active_coins]
     
     # Check safe coins with momentum
     for symbol, change in movers_filtered[:50]:
