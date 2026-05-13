@@ -14,7 +14,7 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 6             # Min score to enter in NORMAL mode (lowered from 7 — too strict, 22 candidates stuck at 6/7)
+MIN_SCORE_NORMAL = 7             # Min score to enter in NORMAL mode (raised from 6 — too many weak entries chasing momentum)
 
 # ── SL/TP STRATEGY ────────────────────────────────────────────────────────────
 # Percentage-based: PRICE_SL / PRICE_TP

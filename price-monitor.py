@@ -63,7 +63,7 @@ try:
     from config import *
 except ImportError:
     pass
-CHECK_INTERVAL = 60  # seconds
+CHECK_INTERVAL = 15  # seconds (reduced from 60 — TP1 was missing price spikes)
 
 def get_sig(params):
     return hmac.new(SECRET.encode(), params.encode(), hashlib.sha256).hexdigest()
@@ -80,16 +80,23 @@ def should_move_sl_to_breakeven(entry, current, sl, side, profit_threshold=1.0):
             return entry
     return None
 
-def should_trail_sl(entry, current, sl, side, profit_threshold=5.0, trail_distance=2.0, lock_profit=2.0):
+def should_trail_sl(entry, current, sl, side, profit_threshold=5.0, trail_distance=2.0, lock_profit=2.0, peak_profit=None):
     """
     Trailing SL that locks in profit.
     When profit > profit_threshold%:
       - SL = max(entry + lock_profit%, current - trail_distance%)
       - Never moves SL down, only up
+    
+    FIX (2026-05-13): Added peak_profit parameter. If peak_profit ever hit
+    the threshold but current pulled back, we still lock entry + lock_profit%.
+    This prevents missed trailing SL when price spikes and retraces within
+    the check interval.
     """
     if side == 'LONG':
         profit_pct = ((current - entry) / entry) * 100
-        if profit_pct >= profit_threshold:
+        # Use peak_profit for threshold check if available (high-water mark)
+        effective_peak = peak_profit if peak_profit is not None else profit_pct
+        if effective_peak >= profit_threshold:
             # Minimum lock: entry + lock_profit%
             lock_sl = entry * (1 + lock_profit / 100)
             # Trailing: current - trail_distance%
@@ -101,7 +108,8 @@ def should_trail_sl(entry, current, sl, side, profit_threshold=5.0, trail_distan
                 return new_sl
     else:
         profit_pct = ((entry - current) / entry) * 100
-        if profit_pct >= profit_threshold:
+        effective_peak = peak_profit if peak_profit is not None else profit_pct
+        if effective_peak >= profit_threshold:
             lock_sl = entry * (1 - lock_profit / 100)
             trail_sl = current * (1 + trail_distance / 100)
             new_sl = min(lock_sl, trail_sl)
@@ -313,7 +321,13 @@ def get_algo_open_orders(symbol=None):
             headers=headers, timeout=15
         )
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            # API may return dict with 'orders' key or a plain list
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return data.get('orders', [])
+            return []
     except Exception as e:
         print(f"  ⚠️ Get algo orders error: {e}")
     return []
@@ -599,6 +613,11 @@ def check_multi_tp(symbol, side, entry, current, position_amt, original_amt, pos
     TP1: Close TP1_CLOSE_PCT (25%) at TP1_PERCENT (5%) profit
     TP2: Close TP2_CLOSE_PCT (25%) at TP2_PERCENT (10%) profit
     Remaining 50% runs to PRICE_TP or trailing TP
+    
+    FIX (2026-05-10): Added tp1_done/tp2_done flags to prevent double-close.
+    FIX (2026-05-12): Added high-water mark (peak_profit) — if profit EVER hit
+    the TP level, trigger TP even if current profit pulled back. This prevents
+    missed TPs when price spikes and retraces within the check interval.
     """
     if side == 'LONG':
         profit_pct = ((current - entry) / entry) * 100
@@ -615,29 +634,47 @@ def check_multi_tp(symbol, side, entry, current, position_amt, original_amt, pos
         tp1, tp2 = 5.0, 10.0
         tp1_pct, tp2_pct = 0.25, 0.25
     
+    # Check flags to prevent double-close across loop iterations
+    tp1_done = pos_data.get('tp1_done', False) if pos_data else False
+    tp2_done = pos_data.get('tp2_done', False) if pos_data else False
+    
+    # === HIGH-WATER MARK: Track peak profit ===
+    # If profit EVER hit a TP level, we trigger it even on pullback
+    peak_profit = pos_data.get('peak_profit', 0.0) if pos_data else 0.0
+    if profit_pct > peak_profit:
+        peak_profit = profit_pct
+        if pos_data is not None:
+            pos_data['peak_profit'] = peak_profit
+    
     remaining_pct = (abs(position_amt) / original_amt) * 100 if original_amt > 0 else 0
     close_side = 'SELL' if side == 'LONG' else 'BUY'
     
-    # TP2: Close tp2_pct at +tp2% (if enough remaining) — check first (higher level)
-    if profit_pct >= tp2 and remaining_pct > (tp2_pct * 100):
+    # TP2: Close tp2_pct at +tp2% (if peak ever reached OR current >= tp2)
+    if (profit_pct >= tp2 or peak_profit >= tp2) and remaining_pct > (tp2_pct * 100) and not tp2_done:
         close_amt = abs(original_amt * tp2_pct)
         result = close_position(symbol, close_side, close_amt)
         if result and 'orderId' in result:
+            if pos_data is not None:
+                pos_data['tp2_done'] = True
             log_trade(symbol, side, entry, current, close_amt, 
                      (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
                      'TP2', pos_data)
-            print(f"    📈 TP2 HIT! Closed {tp2_pct*100:.0f}% at +{profit_pct:.2f}%")
+            trigger_reason = "peak" if peak_profit >= tp2 and profit_pct < tp2 else "live"
+            print(f"    📈 TP2 HIT! Closed {tp2_pct*100:.0f}% at +{profit_pct:.2f}% (peak={peak_profit:.2f}%, {trigger_reason})")
             return True
     
-    # TP1: Close tp1_pct at +tp1% (if enough remaining)
-    elif profit_pct >= tp1 and remaining_pct > (tp1_pct * 100):
+    # TP1: Close tp1_pct at +tp1% (if peak ever reached OR current >= tp1)
+    if (profit_pct >= tp1 or peak_profit >= tp1) and remaining_pct > (tp1_pct * 100) and not tp1_done:
         close_amt = abs(original_amt * tp1_pct)
         result = close_position(symbol, close_side, close_amt)
         if result and 'orderId' in result:
+            if pos_data is not None:
+                pos_data['tp1_done'] = True
             log_trade(symbol, side, entry, current, close_amt,
                      (current - entry) * close_amt if side == 'LONG' else (entry - current) * close_amt,
                      'TP1', pos_data)
-            print(f"    📈 TP1 HIT! Closed {tp1_pct*100:.0f}% at +{profit_pct:.2f}%")
+            trigger_reason = "peak" if peak_profit >= tp1 and profit_pct < tp1 else "live"
+            print(f"    📈 TP1 HIT! Closed {tp1_pct*100:.0f}% at +{profit_pct:.2f}% (peak={peak_profit:.2f}%, {trigger_reason})")
             return True
     
     return False
@@ -648,7 +685,8 @@ def main():
         return
     
     print(f"🔔 Price Monitor Starting...")
-    print(f"   Check interval: {CHECK_INTERVAL}s")
+    print(f"   Check interval: {CHECK_INTERVAL}s (adaptive: 5s when in-profit)")
+    print(f"   Trailing SL: peak-profit tracking enabled")
     
     while True:
         try:
@@ -695,9 +733,45 @@ def main():
                     print(f"  {symbol}: [SAVED] Entry={entry:.6f} Current={current:.6f} SL={sl_price:.6f} TP={tp_price:.6f}")
                     # Continue to SL/TP checks and trailing logic below
                 else:
-                    # No saved SL/TP - skip TP/SL monitoring for this position
-                    print(f"  {symbol}: [NO DATA] Entry={entry:.6f} Current={current:.6f} - Skipping (no SL/TP data)")
-                    continue
+                    # FIX (2026-05-13): Auto-calculate SL/TP from ATR when missing
+                    # Previously skipped entirely — positions had NO protection at all
+                    atr = get_atr(symbol)
+                    if atr and entry > 0:
+                        if side == 'LONG':
+                            sl_price = entry - (atr * 2)
+                            tp_price = entry + (atr * 4)
+                        else:
+                            sl_price = entry + (atr * 2)
+                            tp_price = entry - (atr * 4)
+                        pos_data['sl'] = sl_price
+                        pos_data['tp1'] = tp_price
+                        pos_data['side'] = 'BUY' if side == 'LONG' else 'SELL'
+                        pos_data['entry'] = entry
+                        pos_data['original_amt'] = abs(amt)
+                        saved_data[symbol] = pos_data
+                        save_positions_sl_tp(saved_data)
+                        print(f"  {symbol}: [AUTO-CALC] Entry={entry:.6f} SL={sl_price:.6f} TP={tp_price:.6f} (ATR={atr:.6f})")
+                    else:
+                        # Fallback: use percentage-based SL/TP from config
+                        try:
+                            sl_pct = PRICE_SL / 100
+                            tp_pct = PRICE_TP / 100
+                        except:
+                            sl_pct, tp_pct = 0.05, 0.15
+                        if side == 'LONG':
+                            sl_price = entry * (1 - sl_pct)
+                            tp_price = entry * (1 + tp_pct)
+                        else:
+                            sl_price = entry * (1 + sl_pct)
+                            tp_price = entry * (1 - tp_pct)
+                        pos_data['sl'] = sl_price
+                        pos_data['tp1'] = tp_price
+                        pos_data['side'] = 'BUY' if side == 'LONG' else 'SELL'
+                        pos_data['entry'] = entry
+                        pos_data['original_amt'] = abs(amt)
+                        saved_data[symbol] = pos_data
+                        save_positions_sl_tp(saved_data)
+                        print(f"  {symbol}: [FALLBACK] Entry={entry:.6f} SL={sl_price:.6f} TP={tp_price:.6f} (config %)")
                 
                 # Check for Multi-TP levels (partial closes)
                 # Store original amount in pos_data so it persists across iterations
@@ -706,8 +780,50 @@ def main():
                     saved_data[symbol] = pos_data
                     save_positions_sl_tp(saved_data)
                 original_amt = pos_data.get('original_amt', abs(amt))
-                check_multi_tp(symbol, side, entry, current, amt, original_amt, pos_data)
+                tp_hit = check_multi_tp(symbol, side, entry, current, amt, original_amt, pos_data)
+                # Persist flags + peak_profit to disk after any change
+                if tp_hit or pos_data.get('peak_profit', 0.0) > 0:
+                    saved_data[symbol] = pos_data
+                    save_positions_sl_tp(saved_data)
                 
+                # === TRAILING SL — MUST RUN BEFORE SL HIT CHECK ===
+                # FIX (2026-05-13): Moved trailing SL update BEFORE SL hit check.
+                # Previously, if price spiked down, position would close at old SL
+                # instead of the updated trailing SL, causing unnecessary losses.
+                try:
+                    be_thresh = MIN_PROFIT_BREAKEVEN if 'MIN_PROFIT_BREAKEVEN' in dir() else 5.0
+                    trail_dist_sl = TRAIL_SL_DISTANCE if 'TRAIL_SL_DISTANCE' in dir() else 2.0
+                    lock_pct = TRAIL_SL_LOCK if 'TRAIL_SL_LOCK' in dir() else 2.0
+                except:
+                    be_thresh = 5.0
+                    trail_dist_sl = 2.0
+                    lock_pct = 2.0
+                # Use peak_profit from multi-TP tracking (high-water mark)
+                peak_profit = pos_data.get('peak_profit', 0.0)
+                profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
+                # Update peak_profit here too (for positions without multi-TP)
+                if profit_now > peak_profit:
+                    peak_profit = profit_now
+                    pos_data['peak_profit'] = peak_profit
+                new_trail_sl = should_trail_sl(entry, current, sl_price, side,
+                    profit_threshold=be_thresh, trail_distance=trail_dist_sl, lock_profit=lock_pct,
+                    peak_profit=peak_profit)
+                if new_trail_sl and new_trail_sl != sl_price:
+                    trigger_reason = "peak" if peak_profit >= be_thresh and profit_now < be_thresh else "live"
+                    print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%, peak: {peak_profit:.1f}%, {trigger_reason})")
+                    update_sl_to_breakeven(symbol, side, new_trail_sl, tp_price)
+                    notify_trade('breakeven', {
+                        'symbol': symbol,
+                        'entry': entry,
+                        'sl': new_trail_sl,
+                        'profit_pct': profit_now
+                    })
+                    sl_price = new_trail_sl
+                    # Persist new SL to disk so it survives restarts
+                    pos_data['sl'] = sl_price
+                    saved_data[symbol] = pos_data
+                    save_positions_sl_tp(saved_data)
+
                 # Check for trailing TP - activate when profit > configured %
                 try:
                     trail_thresh = MIN_PROFIT_TRAILING_TP if 'MIN_PROFIT_TRAILING_TP' in dir() else 10.0
@@ -720,7 +836,11 @@ def main():
                     print(f"    📈 Trailing TP: {tp_price:.6f} -> {new_trailing_tp:.6f}")
                     update_tp_trailing(symbol, side, new_trailing_tp, sl_price)
                     tp_price = new_trailing_tp
-                
+                    # Persist new TP to disk
+                    pos_data['tp1'] = tp_price
+                    saved_data[symbol] = pos_data
+                    save_positions_sl_tp(saved_data)
+
                 # === AGGRESSIVE AUTO-CLOSE ===
                 # Check if SL should trigger (price crosses SL level)
                 if side == 'LONG' and current <= sl_price:
@@ -775,38 +895,29 @@ def main():
                         log_trade(symbol, side, entry, current, abs(amt), pnl, 'TP', pos_data)
                         add_to_recently_closed(symbol)
                     continue
-                
-                # Trailing SL - lock profit when in profit
-                try:
-                    be_thresh = MIN_PROFIT_BREAKEVEN if 'MIN_PROFIT_BREAKEVEN' in dir() else 5.0
-                    trail_dist = TRAIL_SL_DISTANCE if 'TRAIL_SL_DISTANCE' in dir() else 2.0
-                    lock_pct = TRAIL_SL_LOCK if 'TRAIL_SL_LOCK' in dir() else 2.0
-                except:
-                    be_thresh = 5.0
-                    trail_dist = 2.0
-                    lock_pct = 2.0
-                new_trail_sl = should_trail_sl(entry, current, sl_price, side, 
-                    profit_threshold=be_thresh, trail_distance=trail_dist, lock_profit=lock_pct)
-                if new_trail_sl and new_trail_sl != sl_price:
-                    profit_now = ((current - entry) / entry * 100) if side == 'LONG' else ((entry - current) / entry * 100)
-                    print(f"    🛡 Trailing SL: {sl_price:.6f} -> {new_trail_sl:.6f} (profit: {profit_now:.1f}%)")
-                    update_sl_to_breakeven(symbol, side, new_trail_sl, tp_price)
-                    notify_trade('breakeven', {
-                        'symbol': symbol,
-                        'entry': entry,
-                        'sl': new_trail_sl,
-                        'profit_pct': profit_now
-                    })
-                    sl_price = new_trail_sl
-                
-                # (end of position loop — SL/TP already handled by aggressive auto-close above)
+
+                # (end of position loop — trailing SL already updated above before SL/TP checks)
             
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Checked {len(positions)} positions")
             
+            # Persist peak_profit changes to disk
+            save_positions_sl_tp(saved_data)
+            
+            # Adaptive interval: faster when positions are in profit
+            has_profit = False
+            for p in positions:
+                sym = p.get('symbol')
+                pd = saved_data.get(sym, {})
+                if pd.get('peak_profit', 0.0) > 3.0:
+                    has_profit = True
+                    break
+            next_interval = 5 if has_profit else CHECK_INTERVAL
+            
         except Exception as e:
             print(f"Error: {e}")
+            next_interval = CHECK_INTERVAL
         
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(next_interval)
 
 if __name__ == "__main__":
     main()

@@ -1468,7 +1468,23 @@ def analyze_symbol(symbol, stats):
         # Fisher Transform Bullish: +1 (fisher > 0 and rising)
         if fisher_val > 0 and fisher_val > fisher_prev: long_score += 1
         # Fisher Bullish Cross: +1 (crossing from negative to positive)
+        # NOTE: Reduced from +2 to +1 (2026-05-11) — Fisher cross was triggering too often at local tops
         if fisher_val > 0 and fisher_prev < 0: long_score += 1
+        # RSI PENALTY: -1 for elevated RSI (>55), -2 for high RSI (>60)
+        # Prevents high-scoring coins from bypassing momentum exhaustion
+        # Tightened 2026-05-11: entries at RSI 65+ were still passing through
+        # Tightened 2026-05-12: BCH entered at RSI 66.9, AAVE at 62.3, GRT at 61.8
+        if rsi_14 > 60:
+            long_score -= 2
+        elif rsi_14 > 55:
+            long_score -= 1
+        # MACD Flat Penalty: reject momentum-less entries (GRT had histogram=0.0000)
+        # 2026-05-13: If price pumped >3% but MACD is flat, it's a fake move — hard reject
+        if histogram is not None and abs(histogram) < 0.005:
+            if price_change > 3:
+                print(f"(macd_flat={histogram:.4f}+pump)", end=" ", flush=True)
+                return None
+            long_score -= 2  # Strong penalty for flat MACD — no real momentum
         
         runner_score = long_score
     
@@ -1539,6 +1555,22 @@ def analyze_symbol(symbol, stats):
         print(f"(ch={price_change:.1f}%)", end=" ", flush=True)
         return None
     
+    # Anti-Chasing Filter: reject if 4h price change is extreme (>6% LONG, <-6% SHORT)
+    # Entering after a 6%+ move is chasing — wait for pullback
+    # 2026-05-13: Tightened from 8% — GRT (5.6%) and KAVA (5.8%) were chase entries that went negative
+    if direction == "LONG" and price_change > 6:
+        print(f"(chase_long={price_change:.1f}%>6%)", end=" ", flush=True)
+        return None
+    if direction == "SHORT" and price_change < -6:
+        print(f"(chase_short={price_change:.1f}%<-6%)", end=" ", flush=True)
+        return None
+    
+    # Hard RSI reject: never enter LONG with RSI > 68 (momentum exhaustion guaranteed)
+    # 2026-05-12: BCH entered at RSI 66.9, now -3.75%. Hard cutoff prevents this.
+    if direction == "LONG" and rsi_14 > 68:
+        print(f"(rsi={rsi_14:.1f}>68)", end=" ", flush=True)
+        return None
+    
     # Debug: log score breakdown for analysis
     debug_info = {
         'vol': vol_ratio,
@@ -1555,15 +1587,21 @@ def analyze_symbol(symbol, stats):
     # === DIRECTION FILTERS ===
     # EMA Filter - for LONG, reject if price is WAY over-extended above ATR bands
     # Exception: breakout patterns and strong momentum (>10%) allowed even if extended
-    if direction == "LONG" and ema_position > 80 and not breakout and price_change < 5:
-        print(f"(ema_pos={ema_position:.0f}>80)", end=" ", flush=True)
+    if direction == "LONG" and ema_position > 65 and not breakout and price_change < 5:
+        print(f"(ema_pos={ema_position:.0f}>65)", end=" ", flush=True)
         return None
     # SHORT: no ema_pos filter — in downtrends, negative ema_pos is normal
     # The scoring system and other filters already validate quality
     
-    # RSI Overbought Filter: reject LONG if RSI > 70 (too late to enter)
-    if direction == "LONG" and rsi_14 > 70:
-        print(f"(rsi={rsi_14:.0f}>70)", end=" ", flush=True)
+    # RSI Overbought Filter: reject LONG if RSI > 62 (tightened from 65 — avoid chasing mature momentum)
+    # 2026-05-13: KAVA entered at RSI 64.8, now -1.82%. 62 catches late-stage pumps earlier.
+    if direction == "LONG" and rsi_14 > 62:
+        print(f"(rsi={rsi_14:.0f}>62)", end=" ", flush=True)
+        return None
+    
+    # StochRSI Overbought Filter: reject LONG if StochRSI %K > 80 (extreme overbought)
+    if direction == "LONG" and stoch_rsi['k'] > 80:
+        print(f"(stoch_k={stoch_rsi['k']:.0f}>80)", end=" ", flush=True)
         return None
     
     # RSI Oversold Filter: reject SHORT if RSI < 20 (extreme oversold, bounce risk)
@@ -1598,20 +1636,33 @@ def analyze_symbol(symbol, stats):
         print(f"(4h={h4_trend})", end=" ", flush=True)
         return None
     
-    # Near Recent High Filter: reject LONG if price within 5% of 20-candle high (chasing)
-    # Exception: if price_change > 5%, it's a breakout not a chase
+    # Near Recent High Filter: reject LONG if price within 3% of 20-candle high (chasing)
+    # Exception: if price_change > 7%, strong breakout confirmed by volume (not just a pump)
+    # 2026-05-13: Raised exception from 5% to 7% — 5-6% pumps were false "breakout" signals
     if direction == "LONG":
         recent_high = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-        if current >= recent_high * 0.95 and price_change < 5:  # Tightened from 4% to 5% — avoid buying near resistance
+        if current >= recent_high * 0.97 and price_change < 7:
             distance_pct = ((recent_high - current) / current) * 100
             print(f"(near_high:{distance_pct:.1f}%)", end=" ", flush=True)
             return None
     
-    # Near Recent Low Filter: reject SHORT if price within 5% of 20-candle low (chasing bottom)
+    # Position Range Filter (2026-05-11): reject LONG if price >70% of 30-period range
+    # Prevents chasing entries in upper portion of the range — wait for pullback
+    # Exception: if price_change > 7%, strong breakout (raised from 5% on 2026-05-13)
+    if direction == "LONG" and len(closes) >= 30:
+        range_30_high = max(highs[-30:])
+        range_30_low = min(lows[-30:])
+        if range_30_high > range_30_low:
+            range_position = ((current - range_30_low) / (range_30_high - range_30_low)) * 100
+            if range_position > 70 and price_change < 7:
+                print(f"(range_pos:{range_position:.0f}%>70%)", end=" ", flush=True)
+                return None
+    
+    # Near Recent Low Filter: reject SHORT if price within 3% of 20-candle low (chasing bottom)
     # Exception: if price_change < -5%, it's a breakdown not a chase
     if direction == "SHORT":
         recent_low = min(lows[-20:]) if len(lows) >= 20 else min(lows)
-        if current <= recent_low * 1.05 and price_change > -5:  # Tightened from 4% to 5% — avoid shorting near support
+        if current <= recent_low * 1.03 and price_change > -5:  # Tightened from 5% to 3% — avoid shorting near support
             distance_pct = ((current - recent_low) / recent_low) * 100
             print(f"(near_low:{distance_pct:.1f}%)", end=" ", flush=True)
             return None
@@ -1621,9 +1672,21 @@ def analyze_symbol(symbol, stats):
         print(f"(chop={chop_value:.0f}>60)", end=" ", flush=True)
         return None
     
+    # VWAP Distance Filter: reject LONG if price >5% above VWAP (over-extended from fair value)
+    if direction == "LONG" and vwap > 0:
+        vwap_dist = ((current - vwap) / vwap) * 100
+        if vwap_dist > 5:
+            print(f"(vwap_dist={vwap_dist:.1f}%>5%)", end=" ", flush=True)
+            return None
+    
     # ADX Filter: reject if market is not trending (ADX < 20)
     if adx_value < 20:
         print(f"(adx={adx_value:.0f}<20)", end=" ", flush=True)
+        return None
+    
+    # ADX Maturity Filter: reject LONG if ADX > 55 (trend too mature, exhaustion risk)
+    if direction == "LONG" and adx_value > 55:
+        print(f"(adx={adx_value:.0f}>55_mature)", end=" ", flush=True)
         return None
     
     # Taker Buy/Sell Volume Ratio - fetch only after all other filters pass
