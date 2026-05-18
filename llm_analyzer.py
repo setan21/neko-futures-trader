@@ -86,7 +86,7 @@ TECHNICAL DATA:
 4. Is the SL reasonable (not too tight, not too wide)?
 5. Any red flags? (funding extreme, divergence, exhaustion)
 6. For SHORT: If price_change < -3%, momentum drop is real — approve if other indicators align
-7. ANTI-CHASING: If price_change > 3% (LONG) or < -3% (SHORT), the move is already extended — REJECT unless strong reversal setup
+7. ANTI-CHASING: If price_change > 5% (LONG) or < -5% (SHORT), the move is already extended — REJECT unless strong reversal setup
 
 Reply in JSON ONLY:
 {{"decision": "YES" or "NO", "confidence": 0.0-1.0, "reason": "one line reason"}}

@@ -89,7 +89,7 @@ except NameError:
 try:
     MIN_SCORE_NORMAL
 except NameError:
-    MIN_SCORE_NORMAL = 7  # Raised from 4 to 7 (Apr 27)
+    MIN_SCORE_NORMAL = 6  # 2026-05-17: Lowered from 7 — LLM + filters act as quality gates
 
 # Load delisting blocklist
 try:
@@ -1264,8 +1264,8 @@ def analyze_symbol(symbol, stats):
     
     # TradFi detection — use relaxed thresholds
     _is_tradfi = is_tradfi(symbol)
-    _chase_limit = 10.0 if _is_tradfi else 6.0   # Stocks can trend more
-    _macd_flat_threshold = 0.001 if _is_tradfi else 0.005  # TradFi often has flatter MACD
+    _chase_limit = 5.0 if _is_tradfi else 4.0   # 2026-05-15: Tightened TradFi from 8% — COINUSDT chase entry at 7.5% went -2.5%
+    _macd_flat_threshold = 0.001 if _is_tradfi else 0.008  # 2026-05-17: Raised from 0.005 — too many momentum entries blocked (202 rejections). 0.008 catches truly flat MACD while allowing real momentum.
     
     # Get candles first to check volume/momentum
     candles = get_klines(symbol, '1h', 50)
@@ -1280,10 +1280,12 @@ def analyze_symbol(symbol, stats):
     current = closes[-1]
     
     # === RUNNER CRITERIA ===
-    # 1. Volume Spike (5x+ average)
-    # Use volumes[-2] (previous completed candle), not [-1] (current incomplete candle)
+    # 1. Volume Spike
+    # 2026-05-17: Use max of current and previous candle
+    # Current candle (volumes[-1]) captures live volume but is 0 at start of hour
+    # Previous candle (volumes[-2]) has completed volume but may be before the move
     avg_vol = sum(volumes[-25:-1]) / 24 if len(volumes) >= 25 else sum(volumes[:-1]) / (len(volumes) - 1)
-    recent_vol = volumes[-2] if len(volumes) >= 2 else volumes[-1]
+    recent_vol = max(volumes[-1], volumes[-2] if len(volumes) >= 2 else 0)
     vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1
     
     # Get weekly data
@@ -1437,12 +1439,25 @@ def analyze_symbol(symbol, stats):
     # MACD values
     macd_line, signal_line, histogram = calc_macd(closes)
     
-    # Determine direction from price_change + RSI context
-    # Prevent SHORT when RSI already low (near bottom = risky short)
-    # Prevent LONG when RSI already high (near top = risky long)
+    # Determine direction from price_change + EMA alignment + 4H trend
+    # 2026-05-17: Improved from pure price_change binary — now considers trend context
+    # A coin with +0.1% bounce in downtrend shouldn't be LONG
+    _ema_bullish = ema_9 and ema_21 and ema_9 > ema_21
+    _ema_bearish = ema_9 and ema_21 and ema_9 < ema_21
+    
     if price_change > 0:
+        # LONG: price up + (EMA bullish OR 4H bullish) = strong LONG
+        # LONG: price up + EMA bearish + 4H bearish = weak, skip
+        if _ema_bearish and h4_trend == 'BEARISH':
+            print(f"(dir_conflict:up+ema_bear+4h_bear)", end=" ", flush=True)
+            return None
         direction = "LONG"
     else:
+        # SHORT: price down + (EMA bearish OR 4H bearish) = strong SHORT
+        # SHORT: price down + EMA bullish + 4H bullish = weak, skip
+        if _ema_bullish and h4_trend == 'BULLISH':
+            print(f"(dir_conflict:down+ema_bull+4h_bull)", end=" ", flush=True)
+            return None
         direction = "SHORT"
     
     # RSI context guard: reject SHORT if RSI < 35 (already oversold, bounce likely)
@@ -1512,18 +1527,24 @@ def analyze_symbol(symbol, stats):
             if rsi_14 > 65:
                 long_score -= 1
         else:
-            if rsi_14 > 60:
+            # 2026-05-15: Relaxed from >60=-2,>55=-1 to >65=-2,>60=-1
+            # Sideways market keeps RSI 55-65 for most coins — old penalty killed too many
+            if rsi_14 > 65:
                 long_score -= 2
-            elif rsi_14 > 55:
+            elif rsi_14 > 60:
                 long_score -= 1
         # MACD Flat Penalty: reject momentum-less entries (GRT had histogram=0.0000)
         # 2026-05-13: If price pumped >3% but MACD is flat, it's a fake move — hard reject
         # 2026-05-13: TradFi uses relaxed threshold (0.001 vs 0.005) — stocks have flatter MACD
+        # 2026-05-17: Exception for extreme moves (>10%) — EMA hasn't caught up, MACD naturally flat
         if histogram is not None and abs(histogram) < _macd_flat_threshold:
-            if price_change > 3:
+            if price_change > 10:
+                long_score -= 1  # Penalty only — extreme move is real momentum
+            elif price_change > 3:
                 print(f"(macd_flat={histogram:.4f}+pump)", end=" ", flush=True)
                 return None
-            long_score -= 2  # Strong penalty for flat MACD — no real momentum
+            else:
+                long_score -= 2  # Strong penalty for flat MACD — no real momentum
         
         runner_score = long_score
     
@@ -1576,6 +1597,24 @@ def analyze_symbol(symbol, stats):
         # Fisher Bearish Cross: +1 (crossing from positive to negative)
         if fisher_val < 0 and fisher_prev > 0: short_score += 1
         
+        # === SHORT PENALTIES (2026-05-17 — symmetry with LONG) ===
+        # RSI PENALTY: -1 for oversold RSI (<35), -2 for extreme (<25)
+        # SHORT at RSI < 35 is chasing the dump — bounce risk
+        if rsi_14 < 25:
+            short_score -= 2
+        elif rsi_14 < 35:
+            short_score -= 1
+        # MACD Flat Penalty for SHORT: no momentum = no conviction
+        # 2026-05-17: Exception for extreme moves (<-10%) — EMA hasn't caught up
+        if histogram is not None and abs(histogram) < _macd_flat_threshold:
+            if price_change < -10:
+                short_score -= 1  # Penalty only — extreme drop is real momentum
+            elif price_change < -3:
+                print(f"(macd_flat={histogram:.4f}+dump)", end=" ", flush=True)
+                return None
+            else:
+                short_score -= 2
+        
         runner_score = short_score
     
     # Sleep mode check - use appropriate MIN_SCORE
@@ -1597,17 +1636,30 @@ def analyze_symbol(symbol, stats):
     if abs(price_change) < MIN_PRICE_CHANGE:
         print(f"(ch={price_change:.1f}%)", end=" ", flush=True)
         return None
+
+    # Volume filter: reject if volume < 1x average (no buyer/seller confirmation)
+    # 2026-05-15: COIN/MSTR/ZEC/INJ all entered with vol 0.3-0.5x, all went negative
+    if vol_ratio < 1.0:
+        print(f"(vol={vol_ratio:.1f}x<1.0)", end=" ", flush=True)
+        return None
     
-    # Anti-Chasing Filter: reject if 4h price change is extreme (>6% LONG, <-6% SHORT)
-    # Entering after a 6%+ move is chasing — wait for pullback
+    # Anti-Chasing Filter: reject if 4h price change is extreme (>4% LONG, <-4% SHORT)
+    # Entering after a 4%+ move is chasing — wait for pullback
     # 2026-05-13: Tightened from 8% — GRT (5.6%) and KAVA (5.8%) were chase entries that went negative
     # 2026-05-13: TradFi uses 10% limit — stocks can trend stronger
+    # 2026-05-17: Exception for extreme moves (>15%) with volume — genuine breakouts
     if direction == "LONG" and price_change > _chase_limit:
-        print(f"(chase_long={price_change:.1f}%>{_chase_limit:.0f}%)", end=" ", flush=True)
-        return None
+        if price_change > 15 and vol_ratio > 2.0:
+            pass  # Genuine breakout with volume — allow
+        else:
+            print(f"(chase_long={price_change:.1f}%>{_chase_limit:.0f}%)", end=" ", flush=True)
+            return None
     if direction == "SHORT" and price_change < -_chase_limit:
-        print(f"(chase_short={price_change:.1f}%)", end=" ", flush=True)
-        return None
+        if price_change < -15 and vol_ratio > 2.0:
+            pass  # Genuine breakdown with volume — allow
+        else:
+            print(f"(chase_short={price_change:.1f}%<-{_chase_limit:.0f}%)", end=" ", flush=True)
+            return None
     
     # Hard RSI reject: never enter LONG with RSI > 68 (momentum exhaustion guaranteed)
     # 2026-05-12: BCH entered at RSI 66.9, now -3.75%. Hard cutoff prevents this.
@@ -1692,8 +1744,9 @@ def analyze_symbol(symbol, stats):
     # Exception: if price_change > 7%, strong breakout confirmed by volume (not just a pump)
     # 2026-05-13: Raised exception from 5% to 7% — 5-6% pumps were false "breakout" signals
     # 2026-05-13: TradFi uses 5% proximity — stocks can stay near highs while trending
+    # 2026-05-14: Tightened TradFi from 5% to 3% — EWYUSDT at 0.0-0.2% from high was getting rejected (noise)
     if direction == "LONG":
-        _near_high_pct = 0.95 if _is_tradfi else 0.97
+        _near_high_pct = 0.97 if _is_tradfi else 0.97
         recent_high = max(highs[-20:]) if len(highs) >= 20 else max(highs)
         if current >= recent_high * _near_high_pct and price_change < 7:
             distance_pct = ((recent_high - current) / current) * 100
@@ -1812,7 +1865,12 @@ def analyze_symbol(symbol, stats):
         runner_score += 1  # Top traders net long
     elif direction == "SHORT" and top_trader['ratio'] < 0.9:
         runner_score += 1  # Top traders net short
-    
+
+    # Re-check score after bonuses — candidates at score 5-6 can reach min_score with bonuses
+    if runner_score < min_score:
+        print(f"(score={runner_score}/{min_score}_post_bonus)", end=" ", flush=True)
+        return None
+
     # SL/TP based on percentage (PRICE_SL / PRICE_TP)
     if direction == "LONG":
         sl = current * (1 - PRICE_SL / 100)
@@ -1824,7 +1882,7 @@ def analyze_symbol(symbol, stats):
     sl_method = "PRICE"
     
     # Trend
-    trend = "BULLISH" if current > ema_50 else "BEARISH"
+    trend = "BULLISH" if current > (ema_50 or sma_50) else "BEARISH"
     
     # Structure
     if breakout and direction == "LONG":
@@ -1872,7 +1930,7 @@ def analyze_symbol(symbol, stats):
         'sl_method': sl_method,
         'rsi': rsi,
         'ema_21': ema_21,
-        'ema_50': ema_50,
+        'ema_50': ema_50 or sma_50,
         'trend': trend,
         'structure': structure,
         'support': support,
@@ -2222,8 +2280,8 @@ def main():
         active_coins = set(SAFE_COINS)
     movers_filtered = [(s, p) for s, p in movers if s in active_coins]
     
-    # Check safe coins with momentum
-    for symbol, change in movers_filtered[:50]:
+    # Check safe coins with momentum (expanded from 50 to 100 — May 2026)
+    for symbol, change in movers_filtered[:100]:
         if open_count >= MAX_POSITIONS:
             break
         
@@ -2300,6 +2358,12 @@ def main():
                 # Use int division then multiply to avoid float precision issues
                 qty_steps = int(qty_raw / step_size)
                 quantity = qty_steps * step_size
+                
+                # Format to correct decimal places to avoid precision errors
+                # e.g., step_size=0.01 → 2 decimals, step_size=0.001 → 3 decimals
+                step_str = f"{step_size:.10f}".rstrip('0')
+                decimals = len(step_str.split('.')[1]) if '.' in step_str else 0
+                quantity = float(f"{quantity:.{decimals}f}")
                 
                 # Ensure minimum quantity
                 if quantity < min_qty:

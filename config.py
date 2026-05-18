@@ -14,7 +14,7 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 7             # Min score to enter in NORMAL mode
+MIN_SCORE_NORMAL = 6             # 2026-05-17: Lowered from 7 — LLM + volume filter + direction filter now act as quality gates. 69 coins at 6/7 were being missed.
 
 # ── SL/TP STRATEGY ────────────────────────────────────────────────────────────
 PRICE_TP = 15.0                 # Take Profit: +15% for LONG, -15% for SHORT
@@ -44,18 +44,18 @@ NOTIFY_ON_TRAILING_TP = False
 
 # ── SCANNER ──────────────────────────────────────────────────────────────────
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
-MIN_PRICE_CHANGE = 3.0          # Min % price change for signal
+MIN_PRICE_CHANGE = 2.0          # Min % price change for signal (was 3.0, too strict for sideways market)
 SKIP_RECENT_HOURS = 24          # Skip re-entry for 24h after close
 
 # ── DYNAMIC COIN LIST ────────────────────────────────────────────────────────
 # Auto-fetches all tradeable Binance Futures symbols, filters by volume,
 # excludes settling/delisting pairs. Refreshes every hour.
 # See dynamic_coins.py for implementation.
-DYNAMIC_COINS_ENABLED = False   # Use static SAFE_COINS (not dynamic)
+DYNAMIC_COINS_ENABLED = True    # 2026-05-17: Enabled — static SAFE_COINS only covers 18% of market, missing 97% of volatile movers
 DYNAMIC_MIN_VOLUME = 2_000_000  # Minimum 24h volume in USDT ($2M)
 
 # ── LLM ANALYZER ────────────────────────────────────────────────────────────
-LLM_ENABLED = False              # LLM rejecting 98.5% of signals
+LLM_ENABLED = True               # Re-enabled 2026-05-15 with volume filter
 LLM_MODEL = "xiaomi/mimo-v2-pro"
 LLM_MIN_SCORE = 4
 LLM_TEMPERATURE = 0.1
