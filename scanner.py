@@ -89,7 +89,7 @@ except NameError:
 try:
     MIN_SCORE_NORMAL
 except NameError:
-    MIN_SCORE_NORMAL = 6  # 2026-05-17: Lowered from 7 — LLM + filters act as quality gates
+    MIN_SCORE_NORMAL = 7  # 2026-05-18 OVERHAUL: Back to 7 — 6 produced 22% WR, -117 USDT. Quality > quantity.  # 2026-05-17: Lowered from 7 — LLM + filters act as quality gates
 
 # Load delisting blocklist
 try:
@@ -271,6 +271,28 @@ def get_klines(symbol, interval='1h', limit=100):
     url = f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}'
     r = requests.get(url, timeout=15)
     return r.json()
+
+def get_btc_regime():
+    """Check BTC 4H trend for market regime filtering.
+    Returns 'BULLISH', 'BEARISH', or 'NEUTRAL'.
+    Uses EMA9 vs EMA21 on 4H candles.
+    """
+    try:
+        candles = get_klines('BTCUSDT', '4h', 25)
+        if not candles or len(candles) < 21:
+            return 'NEUTRAL'
+        closes = [float(c[4]) for c in candles]
+        ema_9 = calc_ema(closes, 9)
+        ema_21 = calc_ema(closes, 21)
+        if not ema_9 or not ema_21:
+            return 'NEUTRAL'
+        if ema_9 > ema_21:
+            return 'BULLISH'
+        elif ema_9 < ema_21:
+            return 'BEARISH'
+        return 'NEUTRAL'
+    except:
+        return 'NEUTRAL'
 
 def cleanup_orphan_orders():
     """Cancel SL/TP algo orders for closed positions.
@@ -1257,14 +1279,13 @@ def calc_macd(prices, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 
-def analyze_symbol(symbol, stats):
+def analyze_symbol(symbol, stats, btc_regime='NEUTRAL'):
     """Runner-focused analysis - look for momentum explosions"""
     stat = stats.get(symbol, {})
     price_change = float(stat.get('priceChangePercent', 0))
     
     # TradFi detection — use relaxed thresholds
     _is_tradfi = is_tradfi(symbol)
-    _chase_limit = 5.0 if _is_tradfi else 4.0   # 2026-05-15: Tightened TradFi from 8% — COINUSDT chase entry at 7.5% went -2.5%
     _macd_flat_threshold = 0.001 if _is_tradfi else 0.008  # 2026-05-17: Raised from 0.005 — too many momentum entries blocked (202 rejections). 0.008 catches truly flat MACD while allowing real momentum.
     
     # Get candles first to check volume/momentum
@@ -1455,16 +1476,47 @@ def analyze_symbol(symbol, stats):
     else:
         # SHORT: price down + (EMA bearish OR 4H bearish) = strong SHORT
         # SHORT: price down + EMA bullish + 4H bullish = weak, skip
+        # 2026-05-18: EXCEPTION — if BTC bearish, allow SHORT on bounces (catch bear market rallies)
         if _ema_bullish and h4_trend == 'BULLISH':
-            print(f"(dir_conflict:down+ema_bull+4h_bull)", end=" ", flush=True)
-            return None
+            if btc_regime == 'BEARISH':
+                pass  # Bear market bounce = SHORT opportunity
+            else:
+                print(f"(dir_conflict:down+ema_bull+4h_bull)", end=" ", flush=True)
+                return None
         direction = "SHORT"
+    
+    # === BTC REGIME FILTER (2026-05-18) ===
+    # Skip LONG entries when BTC 4H trend is bearish — fighting the tide
+    if BTC_REGIME_CHECK and direction == "LONG" and btc_regime == 'BEARISH' and not _is_tradfi:
+        print(f"(btc_bearish)", end=" ", flush=True)
+        return None
+    
+    # === STRONG TREND FILTER (2026-05-18 OVERHAUL) ===
+    # Require EMA alignment for direction — no counter-trend entries
+    # LONG: EMA9 > EMA21 (short-term momentum up)
+    # SHORT: EMA9 < EMA21 (short-term momentum down)
+    # Exception: TradFi can use relaxed filter (stocks trend differently)
+    if direction == "LONG" and ema_9 and ema_21 and ema_9 < ema_21:
+        print(f"(trend_reject:ema9<{ema_21:.1f}<ema21)", end=" ", flush=True)
+        return None
+    # SHORT: require EMA9 < EMA21 (downtrend confirmed)
+    # EXCEPTION: if BTC bearish, allow SHORT on bounces (EMA9 > EMA21 is temporary)
+    if direction == "SHORT" and ema_9 and ema_21 and ema_9 > ema_21:
+        if btc_regime == 'BEARISH':
+            pass  # Bear market bounce — SHORT opportunity
+        else:
+            print(f"(trend_reject:ema9>{ema_21:.1f}>ema21)", end=" ", flush=True)
+            return None
     
     # RSI context guard: reject SHORT if RSI < 35 (already oversold, bounce likely)
     # This prevents chasing a dump too late (TIA problem: SHORT at RSI 37.8)
+    # 2026-05-18: EXCEPTION — if BTC bearish, allow SHORT with RSI 15-35 (coins stay oversold in bear markets)
     if direction == "SHORT" and rsi_14 < 35:
-        print(f"(rsi_short_low={rsi_14:.0f}<35)", end=" ", flush=True)
-        return None
+        if btc_regime == 'BEARISH' and rsi_14 >= 15:
+            pass  # Bear market — coins stay oversold, SHORT is valid
+        else:
+            print(f"(rsi_short_low={rsi_14:.2f}<35,btc={btc_regime})", end=" ", flush=True)
+            return None
     
     # RSI context guard: reject LONG if RSI > 65 (already overbought)
     # NOTE: This is redundant with the later RSI > 65 filter, but kept here for early exit
@@ -1606,9 +1658,13 @@ def analyze_symbol(symbol, stats):
             short_score -= 1
         # MACD Flat Penalty for SHORT: no momentum = no conviction
         # 2026-05-17: Exception for extreme moves (<-10%) — EMA hasn't caught up
+        # 2026-05-18: Exception for bear market — MACD naturally flat during dumps, volume confirms
+        # 2026-05-19: Bear market SHORT — NEVER hard reject on MACD flat, penalty only
         if histogram is not None and abs(histogram) < _macd_flat_threshold:
             if price_change < -10:
                 short_score -= 1  # Penalty only — extreme drop is real momentum
+            elif btc_regime == 'BEARISH':
+                short_score -= 1  # Bear market — MACD naturally flat during dumps, penalty only
             elif price_change < -3:
                 print(f"(macd_flat={histogram:.4f}+dump)", end=" ", flush=True)
                 return None
@@ -1637,29 +1693,29 @@ def analyze_symbol(symbol, stats):
         print(f"(ch={price_change:.1f}%)", end=" ", flush=True)
         return None
 
-    # Volume filter: reject if volume < 1x average (no buyer/seller confirmation)
+    # Volume filter: reject if volume < 1.5x average (no buyer/seller confirmation)
     # 2026-05-15: COIN/MSTR/ZEC/INJ all entered with vol 0.3-0.5x, all went negative
-    if vol_ratio < 1.0:
-        print(f"(vol={vol_ratio:.1f}x<1.0)", end=" ", flush=True)
+    # 2026-05-18: Raised from 1.0x — still too many weak entries at 1.0-1.4x
+    # 2026-05-19: Bear market SHORT exception — sellers dominant, lower vol threshold to 1.0x
+    _vol_min = 1.0 if (direction == "SHORT" and btc_regime == 'BEARISH') else MIN_VOLUME_RATIO
+    if vol_ratio < _vol_min:
+        print(f"(vol={vol_ratio:.1f}x<{_vol_min:.1f})", end=" ", flush=True)
         return None
     
-    # Anti-Chasing Filter: reject if 4h price change is extreme (>4% LONG, <-4% SHORT)
-    # Entering after a 4%+ move is chasing — wait for pullback
-    # 2026-05-13: Tightened from 8% — GRT (5.6%) and KAVA (5.8%) were chase entries that went negative
-    # 2026-05-13: TradFi uses 10% limit — stocks can trend stronger
-    # 2026-05-17: Exception for extreme moves (>15%) with volume — genuine breakouts
+    # Anti-Chasing Filter: HARD REJECT if price change exceeds chase limit
+    # NO EXCEPTIONS for LONG — coins up >4% are 90%+ likely to pullback
+    # 2026-05-18: Removed >15% breakout exception — FIDA entered at 38.1%, lost -65 USDT
+    # 2026-05-19: Bear market SHORT exception — relax chase to 6% (crypto) / 7% (TradFi)
+    # In bear market, SHORT on dumps >4% is "following trend", not "chasing"
+    _chase_limit = CHASE_LIMIT_TRADFI if _is_tradfi else CHASE_LIMIT_CRYPTO
+    if direction == "SHORT" and btc_regime == 'BEARISH':
+        _chase_limit = 7.0 if _is_tradfi else 6.0
     if direction == "LONG" and price_change > _chase_limit:
-        if price_change > 15 and vol_ratio > 2.0:
-            pass  # Genuine breakout with volume — allow
-        else:
-            print(f"(chase_long={price_change:.1f}%>{_chase_limit:.0f}%)", end=" ", flush=True)
-            return None
+        print(f"(chase_long={price_change:.1f}%>{_chase_limit:.0f}%)", end=" ", flush=True)
+        return None
     if direction == "SHORT" and price_change < -_chase_limit:
-        if price_change < -15 and vol_ratio > 2.0:
-            pass  # Genuine breakdown with volume — allow
-        else:
-            print(f"(chase_short={price_change:.1f}%<-{_chase_limit:.0f}%)", end=" ", flush=True)
-            return None
+        print(f"(chase_short={price_change:.1f}%<-{_chase_limit:.0f}%)", end=" ", flush=True)
+        return None
     
     # Hard RSI reject: never enter LONG with RSI > 68 (momentum exhaustion guaranteed)
     # 2026-05-12: BCH entered at RSI 66.9, now -3.75%. Hard cutoff prevents this.
@@ -1725,7 +1781,8 @@ def analyze_symbol(symbol, stats):
     
     # Momentum Confirmation: require 2+ red candles before SHORT entry
     # Exception: if price_change < -5%, sudden drop — 1 candle is enough
-    if direction == "SHORT":
+    # 2026-05-19: Bear market SHORT — skip red candle check (bounces are noise, trend is down)
+    if direction == "SHORT" and btc_regime != 'BEARISH':
         red_count = sum(1 for i in range(-2, 0) if closes[i] < opens[i])
         min_red = 1 if price_change < -3 else 2
         if red_count < min_red:
@@ -1765,6 +1822,20 @@ def analyze_symbol(symbol, stats):
             range_position = ((current - range_30_low) / (range_30_high - range_30_low)) * 100
             if range_position > _range_limit and price_change < 7:
                 print(f"(range_pos:{range_position:.0f}%>{_range_limit}%)", end=" ", flush=True)
+                return None
+    
+    # Position Range Filter for SHORT (2026-05-19): reject SHORT if price <40% of 30-period range
+    # Prevents chasing entries in lower portion — already near bottom, bounce risk high
+    # Even in BEARISH regime, entering SHORT at range bottom invites strong bounces
+    # Exception: if price_change < -7%, strong breakdown momentum justifies entry anywhere
+    if direction == "SHORT" and len(closes) >= 30:
+        _range_limit_short = 15 if _is_tradfi else 40
+        range_30_high = max(highs[-30:])
+        range_30_low = min(lows[-30:])
+        if range_30_high > range_30_low:
+            range_position = ((current - range_30_low) / (range_30_high - range_30_low)) * 100
+            if range_position < _range_limit_short and price_change > -7:
+                print(f"(range_pos:{range_position:.0f}%<{_range_limit_short}%)", end=" ", flush=True)
                 return None
     
     # Near Recent Low Filter: reject SHORT if price within 3% of 20-candle low (chasing bottom)
@@ -1818,15 +1889,19 @@ def analyze_symbol(symbol, stats):
     rsi_signal = "OB" if rsi_14 > 70 else "OS" if rsi_14 < 30 else "Neutral"
 
     # MACD Histogram Filter - confirm momentum direction
+    # 2026-05-19: Bear market SHORT — allow small positive histogram (momentum shifts during sustained dumps)
     if histogram is not None:
         if direction == "LONG" and histogram < 0:
             # MACD bearish - reject LONG
             print(f"(hist={histogram:.4f}<0)", end=" ", flush=True)
             return None
         if direction == "SHORT" and histogram > 0:
-            # MACD bullish - reject SHORT
-            print(f"(hist={histogram:.4f}>0)", end=" ", flush=True)
-            return None
+            if btc_regime == 'BEARISH' and histogram < 0.005:
+                pass  # Bear market — small positive histogram is noise, allow SHORT
+            else:
+                # MACD bullish - reject SHORT
+                print(f"(hist={histogram:.4f}>0)", end=" ", flush=True)
+                return None
     
     # SHORT Filter: EMA position > 15 (no chase down)
     if direction == "SHORT" and ema_position <= 15:
@@ -2195,9 +2270,21 @@ def main():
                 if sym not in current_symbols:
                     # Position was closed (manually or auto)
                     print(f"  📝 Detected closed: {sym}")
-                    # Add to recently closed
+                    # Check if it was a loss by checking recent realized PNL
+                    _is_loss = False
+                    try:
+                        ts_check = int(time.time()*1000)
+                        params_check = f"incomeType=REALIZED_PNL&limit=10&timestamp={ts_check}"
+                        sig_check = get_signature(params_check)
+                        r_pnl = requests.get(f'https://fapi.binance.com/fapi/v1/income?{params_check}&signature={sig_check}', headers={'X-MBX-APIKEY': API_KEY})
+                        if isinstance(r_pnl.json(), list):
+                            sym_pnl = sum(float(i['income']) for i in r_pnl.json() if i['symbol'] == sym)
+                            _is_loss = sym_pnl < 0
+                    except:
+                        pass
+                    # Add to recently closed with loss flag
                     with open('.recently_closed', 'a') as f:
-                        f.write(f"{sym},{int(time.time())}\n")
+                        f.write(f"{sym},{int(time.time())},{'loss' if _is_loss else 'win'}\n")
                     # Remove from saved
                     del saved_positions[sym]
             
@@ -2224,6 +2311,22 @@ def main():
         print("⚠️ Max positions reached - waiting...")
         return
     
+    # Daily Loss Limit (2026-05-18): Stop trading if daily PNL < MAX_DAILY_LOSS
+    try:
+        ts_pnl = int(time.time()*1000)
+        pnl_params = f'incomeType=REALIZED_PNL&limit=50&timestamp={ts_pnl}'
+        pnl_sig = get_signature(pnl_params)
+        pnl_r = requests.get(f'https://fapi.binance.com/fapi/v1/income?{pnl_params}&signature={pnl_sig}', headers={'X-MBX-APIKEY': API_KEY})
+        if isinstance(pnl_r.json(), list):
+            today_start = int(time.time() / 86400) * 86400 * 1000  # midnight UTC ms
+            daily_pnl = sum(float(i['income']) for i in pnl_r.json() if i['time'] >= today_start)
+            print(f"  📊 Daily PNL: {daily_pnl:+.2f} USDT")
+            if daily_pnl < MAX_DAILY_LOSS:
+                print(f"🛑 DAILY LOSS LIMIT HIT ({daily_pnl:+.2f} < {MAX_DAILY_LOSS}) — stopping trading for today")
+                return
+    except Exception as e:
+        print(f"  ⚠️ Daily PNL check error: {e}")
+    
     # Check official delist schedule and auto-block
     if DELISTING_CHECK:
         try:
@@ -2247,6 +2350,14 @@ def main():
     
     print(f"  Found {len(movers)} symbols")
     
+    # BTC Regime Check (2026-05-18): Skip LONG entries if BTC 4H is bearish
+    btc_regime = 'NEUTRAL'
+    if BTC_REGIME_CHECK:
+        btc_regime = get_btc_regime()
+        print(f"  📊 BTC Regime: {btc_regime}")
+        if btc_regime == 'BEARISH':
+            print(f"  ⚠️ BTC bearish — LONG entries will be skipped")
+    
     # Sector rejection tracking
     sector_rejections = {}
     
@@ -2257,8 +2368,11 @@ def main():
     except:
         posted = set()
     
-    # Load recently closed positions (skip re-entry for 24h)
+    # Load recently closed positions (skip re-entry based on outcome)
+    # 2026-05-18: Losses get 48h cooldown (LOSS_COOLDOWN_HOURS), wins get 24h (SKIP_RECENT_HOURS)
     recently_closed = set()
+    loss_cooldown_seconds = LOSS_COOLDOWN_HOURS * 3600
+    win_cooldown_seconds = SKIP_RECENT_HOURS * 3600
     try:
         with open('.recently_closed', 'r') as f:
             for line in f:
@@ -2266,9 +2380,11 @@ def main():
                 if line:
                     parts = line.split(',')
                     if len(parts) >= 2:
-                        symbol, timestamp = parts[0], int(parts[1])
-                        # Skip if closed in last 24 hours
-                        if time.time() - timestamp < 86400:  # 24 hours
+                        symbol = parts[0]
+                        timestamp = int(parts[1])
+                        is_loss = len(parts) >= 3 and parts[2] == 'loss'
+                        cooldown = loss_cooldown_seconds if is_loss else win_cooldown_seconds
+                        if time.time() - timestamp < cooldown:
                             recently_closed.add(symbol)
     except:
         pass
@@ -2279,6 +2395,19 @@ def main():
     else:
         active_coins = set(SAFE_COINS)
     movers_filtered = [(s, p) for s, p in movers if s in active_coins]
+    
+    # 2026-05-18: Scan BOTH top gainers (for LONG) AND top losers (for SHORT)
+    # Previously only top 100 gainers were scanned — losers never got checked
+    top_gainers = movers_filtered[:50]   # Top 50 gainers for LONG candidates
+    bottom_losers = movers_filtered[-75:]  # Top 75 losers for SHORT candidates
+    bottom_losers.reverse()  # Sort by most negative first
+    scan_list = []
+    seen = set()
+    for s, p in top_gainers + bottom_losers:
+        if s not in seen:
+            scan_list.append((s, p))
+            seen.add(s)
+    movers_filtered = scan_list
     
     # Check safe coins with momentum (expanded from 50 to 100 — May 2026)
     for symbol, change in movers_filtered[:100]:
@@ -2302,7 +2431,7 @@ def main():
         print(f"  Checking {symbol} ({change:.1f}%)...", end=" ", flush=True)
         
         try:
-            analysis = analyze_symbol(symbol, stats)
+            analysis = analyze_symbol(symbol, stats, btc_regime=btc_regime)
             if analysis:
                 print(f"✅ SIGNAL! {analysis['direction']}")
                 macd_h = analysis.get("macd_histogram", 0)

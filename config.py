@@ -14,25 +14,26 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 6             # 2026-05-17: Lowered from 7 — LLM + volume filter + direction filter now act as quality gates. 69 coins at 6/7 were being missed.
+MIN_SCORE_NORMAL = 7             # 2026-05-18 OVERHAUL: Back to 7 — 6 produced 22% WR, -117 USDT. Quality > quantity.
 
-# ── SL/TP STRATEGY ────────────────────────────────────────────────────────────
-PRICE_TP = 15.0                 # Take Profit: +15% for LONG, -15% for SHORT
-PRICE_SL = 5.0                  # Stop Loss: -5% for LONG, +5% for SHORT
+# ── SL/TP STRATEGY (2026-05-18 OVERHAUL) ────────────────────────────────────
+# Old: SL=5%, TP=15% → 22% WR, big losses. New: SL=3%, TP=8% → tighter risk, better R:R
+PRICE_TP = 8.0                  # Take Profit: +8% for LONG, -8% for SHORT
+PRICE_SL = 3.0                  # Stop Loss: -3% for LONG, +3% for SHORT
 
 # ── BREAKEVEN & TRAILING ─────────────────────────────────────────────────────
-MIN_PROFIT_BREAKEVEN = 5.0       # % profit to start trailing SL
-TRAIL_SL_LOCK = 2.0              # % profit to lock when trailing (SL = entry + this %)
-TRAIL_SL_DISTANCE = 2.0          # SL trails this % below current price
-MIN_PROFIT_TRAILING_TP = 10.0   # % profit to activate trailing TP
-TRAIL_PERCENT = 2.0             # Trail TP by this % when trailing
+MIN_PROFIT_BREAKEVEN = 3.0       # % profit to start trailing SL (was 5%)
+TRAIL_SL_LOCK = 1.5              # % profit to lock when trailing (was 2%)
+TRAIL_SL_DISTANCE = 1.5          # SL trails this % below current price (was 2%)
+MIN_PROFIT_TRAILING_TP = 6.0    # % profit to activate trailing TP (was 10%)
+TRAIL_PERCENT = 1.5             # Trail TP by this % when trailing (was 2%)
 
-# ── PARTIAL TP ──────────────────────────────────────────────────────────────
-TP1_PERCENT = 5.0               # Close 25% at this % profit
+# ── PARTIAL TP (2026-05-18: 3-stage exit) ───────────────────────────────────
+TP1_PERCENT = 4.0               # Close 25% at this % profit (was 5%)
 TP1_CLOSE_PCT = 0.25
-TP2_PERCENT = 10.0              # Close another 25% at this % profit
+TP2_PERCENT = 6.0               # Close another 25% at this % profit (was 10%)
 TP2_CLOSE_PCT = 0.25
-# Remaining 50% runs to PRICE_TP (15%) or trailing TP
+# Remaining 50% runs to PRICE_TP (8%) or trailing TP
 
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 POST_SIGNALS_TO_TELEGRAM = True
@@ -46,6 +47,11 @@ NOTIFY_ON_TRAILING_TP = False
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
 MIN_PRICE_CHANGE = 2.0          # Min % price change for signal (was 3.0, too strict for sideways market)
 SKIP_RECENT_HOURS = 24          # Skip re-entry for 24h after close
+LOSS_COOLDOWN_HOURS = 48        # 2026-05-18: Skip re-entry 48h after a LOSS (prevent revenge trading)
+MIN_VOLUME_RATIO = 1.5          # 2026-05-18: Raised from 1.0 — 0.3-0.5x entries were all losers
+CHASE_LIMIT_CRYPTO = 4.0        # Max % change for crypto entries (no exception!)
+CHASE_LIMIT_TRADFI = 5.0        # Max % change for TradFi entries
+BTC_REGIME_CHECK = True         # 2026-05-8: Skip LONG if BTC 4H trend is bearish
 
 # ── DYNAMIC COIN LIST ────────────────────────────────────────────────────────
 # Auto-fetches all tradeable Binance Futures symbols, filters by volume,
@@ -73,6 +79,7 @@ LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
 # ── RISK ─────────────────────────────────────────────────────────────────────
 MAX_MARGIN_PERCENT = 40
 MAX_RISK_PERCENT = 1.5
+MAX_DAILY_LOSS = -30.0           # 2026-05-18: Stop trading if daily PNL hits -30 USDT (prevents blowup days)
 
 # ── SAFE COINS (FALLBACK — only used if DYNAMIC_COINS_ENABLED = False) ───────
 # Static list as backup. Dynamic mode fetches live from Binance API.
