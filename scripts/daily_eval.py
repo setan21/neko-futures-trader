@@ -99,7 +99,7 @@ def analyze_trades():
             if f.endswith('.json') and f != 'wallets.json':
                 with open(os.path.join(data_dir, f)) as fh:
                     user_data = json.load(fh)
-                    if 'binance_api_key' in user_data:
+                    if user_data.get('binance_api_key', '') and user_data.get('binance_api_secret', ''):
                         api_key = user_data['binance_api_key']
                         api_secret = user_data['binance_api_secret']
                         break
@@ -111,9 +111,9 @@ def analyze_trades():
         
         # Get realized PnL
         ts = int(time.time() * 1000)
-        params = f'timestamp={ts}&recvWindow=60000'
+        params = f'incomeType=REALIZED_PNL&limit=100&recvWindow=5000&timestamp={ts}'
         sig = hmac.new(api_secret.encode(), params.encode(), hashlib.sha256).hexdigest()
-        url = f'https://fapi.binance.com/fapi/v1/income?incomeType=REALIZED_PNL&limit=100&{params}&signature={sig}'
+        url = f'https://fapi.binance.com/fapi/v1/income?{params}&signature={sig}'
         r = requests.get(url, headers={'X-MBX-APIKEY': api_key}, timeout=10)
         income = r.json()
         
