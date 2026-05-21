@@ -195,7 +195,10 @@ Features:
 3. **Direction** — chosen from price change, EMA9/21 alignment, and 4H trend.
 4. **Filters** — chase limit, volume ratio, RSI guard, MACD histogram, EMA
    position, range position (30-bar), green/red candle counts, near-high/low.
-5. **BTC regime** — skip crypto LONGs when BTC 4H EMA9 < EMA21.
+5. **BTC regime** — symmetric:
+   - BTC bearish → skip crypto LONGs, relax SHORT filters
+   - BTC bullish → skip crypto SHORTs, relax LONG filters
+   - 4H EMA9 vs EMA21 detects regime automatically
 6. **Trend filter** — LONG needs EMA9 > EMA21; SHORT needs EMA9 < EMA21
    (relaxed in bear regime for SHORT).
 7. **Score** — sum of indicator weights. Must clear `MIN_SCORE_NORMAL`.
@@ -326,6 +329,7 @@ LLM_FALLBACK2_MODEL    = "MiniMax-M2.5"
 
 ## 📝 Recent History
 
+- **2026-05-21** — symmetric BTC regime handling. Bull market mirrors bear: blocks crypto SHORT in bull, relaxes LONG filters (range_pos 70→90, RSI 65→85, MACD flat penalty only, vol 1.5→1.0x, chase 4→6%). Auto-heal SL/TP added to price-monitor.
 - **2026-05-19** — bear-market SHORT filters + 30-bar `range_pos` protection. WR 19% → 67%.
 - **2026-05-18** — full overhaul. SL 5%→3%, TP 15%→8%, vol 1.0x→1.5x, chase 6%/8%→4%/5%, BTC regime check, EMA9/21 trend filter, 48h loss cooldown.
 - **2026-05-13** — re-enabled LLM with 5% anti-chasing; added crypto-index perps (BTCDOMUSDT, ALLUSDT); TradFi-tuned filters.
