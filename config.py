@@ -14,7 +14,7 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 7             # 2026-05-18 OVERHAUL: Back to 7 — 6 produced 22% WR, -117 USDT. Quality > quantity.
+MIN_SCORE_NORMAL = 6             # 2026-05-21: 7→6 with new quality filters (ADX, momentum, sustained-dump, vol surge)
 
 # ── SL/TP STRATEGY (2026-05-18 OVERHAUL) ────────────────────────────────────
 # Old: SL=5%, TP=15% → 22% WR, big losses. New: SL=3%, TP=8% → tighter risk, better R:R
@@ -45,11 +45,11 @@ NOTIFY_ON_TRAILING_TP = False
 
 # ── SCANNER ──────────────────────────────────────────────────────────────────
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
-MIN_PRICE_CHANGE = 2.0          # Min % price change for signal (was 3.0, too strict for sideways market)
+MIN_PRICE_CHANGE = 1.5          # 2026-05-21: 2%→1.5% catch trend-aligned moves missed at 2%
 SKIP_RECENT_HOURS = 24          # Skip re-entry for 24h after close
 LOSS_COOLDOWN_HOURS = 48        # 2026-05-18: Skip re-entry 48h after a LOSS (prevent revenge trading)
 MIN_VOLUME_RATIO = 1.5          # 2026-05-18: Raised from 1.0 — 0.3-0.5x entries were all losers
-CHASE_LIMIT_CRYPTO = 4.0        # Max % change for crypto entries (no exception!)
+CHASE_LIMIT_CRYPTO = 6.0        # 2026-05-21: 5%→6% + pullback detection catches extended moves
 CHASE_LIMIT_TRADFI = 5.0        # Max % change for TradFi entries
 BTC_REGIME_CHECK = True         # 2026-05-8: Skip LONG if BTC 4H trend is bearish
 
@@ -69,12 +69,25 @@ LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
 LLM_TIMEOUT = 15
 
 LLM_FALLBACK1_ENABLED = True
-LLM_FALLBACK1_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-LLM_FALLBACK1_MODEL = "nousresearch/hermes-4-70b"
+LLM_FALLBACK1_BASE_URL = "http://localhost:20128/v1/chat/completions"
+LLM_FALLBACK1_MODEL = "kr/claude-haiku-4.5"
 
 LLM_FALLBACK2_ENABLED = True
 LLM_FALLBACK2_BASE_URL = "https://api.minimaxi.chat/v1/chat/completions"
 LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
+
+# ── LLM BACKUP MODE (2026-05-22: when all LLM providers fail) ───────────
+# Options: "rule_based" (smart technical filter), "fail_open" (old: approve all), "fail_closed" (reject all)
+LLM_BACKUP_MODE = "rule_based"
+LLM_BACKUP_MIN_SCORE = 8            # Higher bar than normal MIN_SCORE (6) — only high-confidence setups
+LLM_BACKUP_MAX_CHASE = 5.0          # Max % 24h change before rejecting (anti-chase)
+LLM_BACKUP_MAX_RSI_LONG = 68.0      # Reject LONG if RSI above this
+LLM_BACKUP_MIN_RSI_LONG = 30.0      # Reject LONG if RSI below this (falling knife)
+LLM_BACKUP_MAX_RSI_SHORT = 78.0     # Reject SHORT if RSI above this (squeeze risk)
+LLM_BACKUP_MIN_RSI_SHORT = 32.0     # Reject SHORT if RSI below this (oversold)
+LLM_BACKUP_MIN_VOL_RATIO = 1.0      # Minimum volume ratio (no conviction below this)
+LLM_BACKUP_MAX_FUNDING_LONG = 0.08  # Max funding rate for LONG (crowded)
+LLM_BACKUP_MAX_FUNDING_SHORT = -0.08  # Max funding rate for SHORT (crowded)
 
 # ── RISK ─────────────────────────────────────────────────────────────────────
 MAX_MARGIN_PERCENT = 40
