@@ -78,7 +78,7 @@ LLM_FALLBACK2_MODEL = ""
 
 # ── LLM BACKUP MODE (when all LLM providers fail) ───────────────────────────
 LLM_BACKUP_MODE = "rule_based"
-LLM_BACKUP_MIN_SCORE = 9        # 2026-05-22: 8→9 — backup needs A+ signals only
+LLM_BACKUP_MIN_SCORE = 8        # Match scanner MIN_SCORE (backup doesn't need higher bar)
 LLM_BACKUP_MAX_CHASE = 4.0      # 2026-05-22: 5→4% — tighter chase in backup mode
 LLM_BACKUP_MAX_RSI_LONG = 65.0  # 2026-05-22: 68→65 — stricter RSI in backup
 LLM_BACKUP_MIN_RSI_LONG = 32.0  # 2026-05-22: 30→32 — avoid falling knife

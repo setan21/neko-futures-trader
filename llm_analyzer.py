@@ -332,15 +332,13 @@ def rule_based_backup(analysis):
             f"Score {score} < backup min {LLM_BACKUP_MIN_SCORE}")
 
     # ── Gate 2: Anti-chase ───────────────────────────────────────────────
-    # Bear market SHORT: relax chase to 6% (dumps are normal)
-    # Bull market LONG: relax chase to 6% (rallies are normal)
+    # Scanner already filters chase — backup uses wider limits (8% trending)
+    # because it only fires when LLM fails (last safety net, not primary filter)
     _chase = LLM_BACKUP_MAX_CHASE
     if direction == 'SHORT' and price_change < 0:
-        # In bear dumps, coins routinely fall 5-10% — 4% is too tight
-        _chase = max(_chase, 6.0)
+        _chase = max(_chase, 8.0)  # Bear dumps: -8% is normal continuation
     if direction == 'LONG' and price_change > 0:
-        # In bull rallies, coins pump 5-8% — 4% is too tight
-        _chase = max(_chase, 6.0)
+        _chase = max(_chase, 8.0)  # Bull rallies: +8% is normal continuation
     if direction == 'LONG' and price_change > _chase:
         return _backup_reject(symbol, direction,
             f"Chase LONG: +{price_change:.1f}% > {_chase}%")
