@@ -68,13 +68,13 @@ LLM_TEMPERATURE = 0.1
 LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
 LLM_TIMEOUT = 15
 
-LLM_FALLBACK1_ENABLED = True
-LLM_FALLBACK1_BASE_URL = "http://localhost:20128/v1/chat/completions"
-LLM_FALLBACK1_MODEL = "kr/claude-haiku-4.5"
+LLM_FALLBACK1_ENABLED = False
+LLM_FALLBACK1_BASE_URL = ""
+LLM_FALLBACK1_MODEL = ""
 
-LLM_FALLBACK2_ENABLED = True
-LLM_FALLBACK2_BASE_URL = "https://api.minimaxi.chat/v1/chat/completions"
-LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
+LLM_FALLBACK2_ENABLED = False
+LLM_FALLBACK2_BASE_URL = ""
+LLM_FALLBACK2_MODEL = ""
 
 # ── LLM BACKUP MODE (when all LLM providers fail) ───────────────────────────
 LLM_BACKUP_MODE = "rule_based"
