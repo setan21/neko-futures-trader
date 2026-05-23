@@ -2,10 +2,11 @@
 """
 LLM Analyzer — Second opinion layer for Neko Scanner
 Cheap, fast LLM check before trade execution.
-Uses Nous + 9router + MiniMax (default: openai/gpt-4o-mini)
 
-FALLBACK: When all LLM providers fail, uses rule_based_backup() instead of
-fail-open. Rules are strictly derived from technical indicators.
+2026-05-22 OVERHAUL:
+- Tier 1: claude-haiku-4.5 (Nous) — fast, reliable, content-based JSON
+- Tier 2: xiaomi/mimo-v2.5-pro (Nous) — reasoning model, uses tool_calls
+- Tier 3: rule_based_backup — 7 technical gates when LLM down
 """
 
 import os
@@ -13,15 +14,10 @@ import json
 import re
 
 # Load .env at import time so API keys are populated regardless of import order.
-# Fixes the "import-before-.env-load" silent LLM kill bug (2026-05-22):
-# scanner.py imports this module at line 18, but its inline .env loader runs at
-# line 45 — so module-level os.environ.get(...) calls below would return empty
-# strings without this load_dotenv() call.
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except Exception:
-    # python-dotenv not installed — fall back to manual parse
     _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.isfile(_env_path):
         try:
@@ -54,35 +50,64 @@ try:
                         LLM_BACKUP_MAX_FUNDING_LONG, LLM_BACKUP_MAX_FUNDING_SHORT)
 except ImportError:
     LLM_ENABLED = True
-    LLM_MODEL = "nousresearch/hermes-4-70b"
+    LLM_MODEL = "anthropic/claude-haiku-4.5"
     LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
-    LLM_MIN_SCORE = 4
+    LLM_MIN_SCORE = 6
     LLM_TEMPERATURE = 0.1
     LLM_FALLBACK1_ENABLED = True
-    LLM_FALLBACK1_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-    LLM_FALLBACK1_MODEL = "nousresearch/hermes-4-70b"
-    LLM_FALLBACK2_ENABLED = True
-    LLM_FALLBACK2_BASE_URL = "https://api.minimaxi.chat/v1/chat/completions"
-    LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
-    LLM_BACKUP_MODE = "rule_based"     # "rule_based" | "fail_open" | "fail_closed"
-    LLM_BACKUP_MIN_SCORE = 8           # Higher bar than normal MIN_SCORE
-    LLM_BACKUP_MAX_CHASE = 5.0         # Max % change before rejecting (chase filter)
-    LLM_BACKUP_MAX_RSI_LONG = 68.0     # Reject LONG if RSI above this
-    LLM_BACKUP_MIN_RSI_LONG = 30.0     # Reject LONG if RSI below this (falling knife)
-    LLM_BACKUP_MAX_RSI_SHORT = 78.0    # Reject SHORT if RSI above this (too overbought)
-    LLM_BACKUP_MIN_RSI_SHORT = 32.0    # Reject SHORT if RSI below this (oversold)
-    LLM_BACKUP_MIN_VOL_RATIO = 1.0     # Minimum volume ratio
-    LLM_BACKUP_MAX_FUNDING_LONG = 0.08 # Max funding rate for LONG (%)
-    LLM_BACKUP_MAX_FUNDING_SHORT = -0.08  # Max funding rate for SHORT (%)
+    LLM_FALLBACK1_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
+    LLM_FALLBACK1_MODEL = "xiaomi/mimo-v2.5-pro"
+    LLM_FALLBACK2_ENABLED = False
+    LLM_FALLBACK2_BASE_URL = ""
+    LLM_FALLBACK2_MODEL = ""
+    LLM_BACKUP_MODE = "rule_based"
+    LLM_BACKUP_MIN_SCORE = 9
+    LLM_BACKUP_MAX_CHASE = 4.0
+    LLM_BACKUP_MAX_RSI_LONG = 65.0
+    LLM_BACKUP_MIN_RSI_LONG = 32.0
+    LLM_BACKUP_MAX_RSI_SHORT = 75.0
+    LLM_BACKUP_MIN_RSI_SHORT = 35.0
+    LLM_BACKUP_MIN_VOL_RATIO = 2.0
+    LLM_BACKUP_MAX_FUNDING_LONG = 0.06
+    LLM_BACKUP_MAX_FUNDING_SHORT = -0.06
 
-# Load API keys from env
+# Load API keys from env — both tiers use Nous
 LLM_API_KEY = os.environ.get("NOUS_API_KEY", "")
-LLM_FALLBACK1_API_KEY = os.environ.get("9ROUTER_API_KEY", "")
-LLM_FALLBACK2_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+LLM_FALLBACK1_API_KEY = os.environ.get("NOUS_API_KEY", "")
 
 # === CACHE ===
 _analysis_cache = {}
 CACHE_TTL = 300  # 5 min cache
+
+# === TOOL CALLS SCHEMA (for reasoning models) ===
+_ANALYZE_SIGNAL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "analyze_signal",
+        "description": "Submit your trading signal analysis. Call this with your decision.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["YES", "NO"],
+                    "description": "YES = approve trade, NO = reject"
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "How confident in this decision (0.0-1.0)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief one-line reason for the decision"
+                }
+            },
+            "required": ["decision", "confidence", "reason"]
+        }
+    }
+}
 
 
 def _get_cache_key(symbol, direction, score):
@@ -98,7 +123,6 @@ def _is_cache_valid(key):
 
 def format_analysis_prompt(analysis):
     """Build a concise prompt from analysis dict."""
-
     sym = analysis.get('symbol', 'UNKNOWN')
     direction = analysis.get('direction', 'LONG')
     score = analysis.get('runner_score', 0)
@@ -123,23 +147,19 @@ TECHNICAL DATA:
 - SL: ${analysis.get('sl', 0):.6f} | TP: ${analysis.get('tp1', 0):.6f}
 - SL Method: {analysis.get('sl_method', 'PRICE')}
 
-|RULES:
+RULES:
 1. Is this a good {direction} entry RIGHT NOW?
 2. Is momentum aligned? (1h and 24h should agree with direction)
-3. For LONG: RSI 30-65 is ACCEPTABLE (40-60 optimal, 30-40 and 60-65 valid). For SHORT: RSI 40-70 is VALID (dropping from high), only reject if RSI < 30
+3. For LONG: RSI 30-65 is ACCEPTABLE. For SHORT: RSI 40-70 is VALID, reject if RSI < 30
 4. Is the SL reasonable (not too tight, not too wide)?
 5. Any red flags? (funding extreme, divergence, exhaustion)
-6. For SHORT: If price_change < -3%, momentum drop is real — approve if other indicators align
-7. ANTI-CHASING: If price_change > 5% (LONG) or < -5% (SHORT), the move is already extended — REJECT unless strong reversal setup
-
-Reply in JSON ONLY:
-{{"decision": "YES" or "NO", "confidence": 0.0-1.0, "reason": "one line reason"}}
+6. ANTI-CHASING: If price_change > 5% (LONG) or < -5% (SHORT), the move is already extended — REJECT
 """
     return prompt
 
 
 def _do_api_call(url, api_key, model, payload, timeout, max_retries=2):
-    """Make a single API call with retry on rate limit (429). Returns response dict or None."""
+    """Make API call. Supports both content-based and tool_calls-based models."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -149,17 +169,38 @@ def _do_api_call(url, api_key, model, payload, timeout, max_retries=2):
             r = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if r.status_code == 200:
                 data = r.json()
-                content = data.get('choices', [{}])[0].get('message', {}).get('content')
+                msg = data.get('choices', [{}])[0].get('message', {})
+                usage = data.get('usage', {})
+
+                # ── Check tool_calls first (reasoning models use this) ──
+                tool_calls = msg.get('tool_calls', [])
+                if tool_calls:
+                    for tc in tool_calls:
+                        fn = tc.get('function', {})
+                        if fn.get('name') == 'analyze_signal':
+                            try:
+                                args = json.loads(fn.get('arguments', '{}'))
+                                # Return as structured result directly
+                                return {
+                                    'content': None,
+                                    'tool_call_result': args,
+                                    'tokens_in': usage.get('prompt_tokens', 0),
+                                    'tokens_out': usage.get('completion_tokens', 0),
+                                }
+                            except json.JSONDecodeError:
+                                continue
+
+                # ── Fall back to content field ──
+                content = msg.get('content')
                 if not content:
-                    # Model used reasoning field instead of content (e.g. xiaomi/mimo)
-                    reasoning = data.get('choices', [{}])[0].get('message', {}).get('reasoning', '')
+                    # Reasoning model — try reasoning field
+                    reasoning = msg.get('reasoning', '')
                     if reasoning:
-                        # Try to extract JSON from reasoning
                         content = reasoning
                     else:
                         return None
-                usage = data.get('usage', {})
-                # Strip MiniMax/other thinking tags
+
+                # Strip thinking tags
                 content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
                 return {
                     'content': content,
@@ -167,10 +208,9 @@ def _do_api_call(url, api_key, model, payload, timeout, max_retries=2):
                     'tokens_out': usage.get('completion_tokens', 0),
                 }
             elif r.status_code == 429:
-                # Rate limited — parse retry-after if available
                 retry_after = int(r.headers.get('Retry-After', 3 * (attempt + 1)))
                 if attempt < max_retries:
-                    print(f"  ⏳ Rate limited ({url.split('/')[2]}), retry in {retry_after}s... (attempt {attempt+1}/{max_retries})")
+                    print(f"  ⏳ Rate limited ({url.split('/')[2]}), retry in {retry_after}s...")
                     time.sleep(retry_after)
                     continue
                 else:
@@ -181,7 +221,7 @@ def _do_api_call(url, api_key, model, payload, timeout, max_retries=2):
                 return None
         except requests.Timeout:
             if attempt < max_retries:
-                print(f"  ⏳ LLM timeout ({url.split('/')[2]}), retrying... (attempt {attempt+1}/{max_retries})")
+                print(f"  ⏳ LLM timeout ({url.split('/')[2]}), retrying...")
                 time.sleep(2 * (attempt + 1))
                 continue
             print(f"  ⚠️ LLM timeout ({url.split('/')[2]})")
@@ -192,72 +232,75 @@ def _do_api_call(url, api_key, model, payload, timeout, max_retries=2):
     return None
 
 
-def call_llm(prompt, model=None, timeout=15):
-    """Call LLM with 3-tier fallback: Nous → OpenRouter → MiniMax."""
-
-    model = model or LLM_MODEL
-    payload = {
+def _build_content_payload(model, messages, temperature, max_tokens):
+    """Standard content-based payload (for non-reasoning models)."""
+    return {
         "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a crypto futures trading analyst. "
-                    "For LONG entries: RSI 30-65 is ACCEPTABLE (not suboptimal), >70 is risky. "
-                    "RSI 40-60 is optimal for LONG, RSI 30-40 and 60-65 are still valid. "
-                    "For SHORT entries: RSI 40-70 is NORMAL (coin dropping from high), "
-                    "do NOT reject SHORT just because RSI > 60 — that's where short setups happen. "
-                    "Only reject SHORT if RSI < 30 (oversold, too late). "
-                    "Be balanced — approve setups with clear momentum alignment. "
-                    "During market-wide drops (price_change < -3%), SHORT signals are VALID even with higher RSI. "
-                    "CRITICAL: Reject if price has already moved >3% in the signal direction (chasing extended moves). "
-                    "Respond ONLY with valid JSON, no markdown."
-                )
-            },
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": LLM_TEMPERATURE,
-        "max_tokens": 300,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
 
-    # ── Tier 1: Nous Research (Primary) ──────────────────────────────────
+
+def _build_toolcall_payload(model, messages, temperature, max_tokens):
+    """Tool-call payload (for reasoning models that return content=None)."""
+    return {
+        "model": model,
+        "messages": messages,
+        "tools": [_ANALYZE_SIGNAL_TOOL],
+        "tool_choice": {"type": "function", "function": {"name": "analyze_signal"}},
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+
+def call_llm(prompt, model=None, timeout=15):
+    """Call LLM with 2-tier fallback: claude-haiku-4.5 → mimo-v2.5-pro → backup."""
+
+    model = model or LLM_MODEL
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a crypto futures trading analyst. "
+                "For LONG entries: RSI 30-65 is ACCEPTABLE (not suboptimal), >70 is risky. "
+                "RSI 40-60 is optimal for LONG, RSI 30-40 and 60-65 are still valid. "
+                "For SHORT entries: RSI 40-70 is NORMAL (coin dropping from high), "
+                "do NOT reject SHORT just because RSI > 60 — that's where short setups happen. "
+                "Only reject SHORT if RSI < 30 (oversold, too late). "
+                "Be balanced — approve setups with clear momentum alignment. "
+                "During market-wide drops (price_change < -3%), SHORT signals are VALID even with higher RSI. "
+                "CRITICAL: Reject if price has already moved >3% in the signal direction (chasing extended moves). "
+                "Respond ONLY with valid JSON, no markdown."
+            )
+        },
+        {"role": "user", "content": prompt}
+    ]
+
+    # ── Tier 1: claude-haiku-4.5 (content-based, fast, reliable) ────────
     if LLM_API_KEY:
-        print(f"  🧠 LLM → Nous ({model})...")
+        payload = _build_content_payload(model, messages, LLM_TEMPERATURE, 300)
+        print(f"  🧠 LLM → {model}...")
         result = _do_api_call(LLM_BASE_URL, LLM_API_KEY, model, payload, timeout)
         if result:
             result['provider'] = 'nous'
             return result
-        print("  ⚠️ Nous failed, trying OpenRouter...")
+        print(f"  ⚠️ {model} failed, trying fallback...")
     else:
-        print("  ⚠️ No Nous API key, skipping primary...")
+        print("  ⚠️ No Nous API key, skipping...")
 
-    # ── Tier 2: OpenRouter (Fallback 1) ──────────────────────────────────
+    # ── Tier 2: xiaomi/mimo-v2.5-pro (reasoning model, uses tool_calls) ─
     if LLM_FALLBACK1_ENABLED and LLM_FALLBACK1_API_KEY:
         fb1_model = LLM_FALLBACK1_MODEL
-        payload_fb1 = {**payload, "model": fb1_model}
-        print(f"  🧠 LLM → 9router ({fb1_model})...")
+        # Reasoning models need tool_calls for structured output
+        payload_fb1 = _build_toolcall_payload(fb1_model, messages, LLM_TEMPERATURE, 500)
+        print(f"  🧠 LLM → {fb1_model} (reasoning + tool_calls)...")
         result = _do_api_call(LLM_FALLBACK1_BASE_URL, LLM_FALLBACK1_API_KEY,
                               fb1_model, payload_fb1, timeout)
         if result:
-            result['provider'] = 'openrouter'
+            result['provider'] = 'nous'
             return result
-        print("  ⚠️ 9router failed, trying MiniMax...")
-    else:
-        print("  ⚠️ 9router disabled or no key, skipping...")
-
-    # ── Tier 3: MiniMax (Fallback 2) ─────────────────────────────────────
-    if LLM_FALLBACK2_ENABLED and LLM_FALLBACK2_API_KEY:
-        fb2_model = LLM_FALLBACK2_MODEL
-        payload_fb2 = {**payload, "model": fb2_model}
-        print(f"  🧠 LLM → MiniMax ({fb2_model})...")
-        result = _do_api_call(LLM_FALLBACK2_BASE_URL, LLM_FALLBACK2_API_KEY,
-                              fb2_model, payload_fb2, timeout)
-        if result:
-            result['provider'] = 'minimax'
-            return result
-        print("  ⚠️ MiniMax also failed")
-    else:
-        print("  ⚠️ MiniMax disabled or no key")
+        print(f"  ⚠️ {fb1_model} also failed")
 
     return None
 
@@ -268,8 +311,6 @@ def rule_based_backup(analysis):
     Uses technical indicators already available in the analysis dict.
     Much more conservative than fail-open: requires alignment across
     multiple indicators to approve a trade.
-
-    Returns dict with same shape as LLM result: approved, reason, model, etc.
     """
     symbol = analysis.get('symbol', '?')
     direction = analysis.get('direction', 'LONG')
@@ -283,13 +324,9 @@ def rule_based_backup(analysis):
     ema_50 = analysis.get('ema_50', 0)
     current = analysis.get('current', 0)
     macd_hist = analysis.get('macd_histogram', 0)
-    oi_change = analysis.get('oi_change', 0)
-    trend = analysis.get('trend', 'N/A')
     breakout = analysis.get('breakout', False)
 
-    reasons = []
-
-    # ── Gate 1: Score threshold (higher bar than normal) ─────────────────
+    # ── Gate 1: Score threshold ──────────────────────────────────────────
     if score < LLM_BACKUP_MIN_SCORE:
         return _backup_reject(symbol, direction,
             f"Score {score} < backup min {LLM_BACKUP_MIN_SCORE}")
@@ -310,76 +347,68 @@ def rule_based_backup(analysis):
         if rsi < LLM_BACKUP_MIN_RSI_LONG:
             return _backup_reject(symbol, direction,
                 f"RSI {rsi:.1f} < {LLM_BACKUP_MIN_RSI_LONG} (falling knife)")
-    else:  # SHORT
+    else:
         if rsi < LLM_BACKUP_MIN_RSI_SHORT:
             return _backup_reject(symbol, direction,
                 f"RSI {rsi:.1f} < {LLM_BACKUP_MIN_RSI_SHORT} (oversold for SHORT)")
         if rsi > LLM_BACKUP_MAX_RSI_SHORT:
             return _backup_reject(symbol, direction,
-                f"RSI {rsi:.1f} > {LLM_BACKUP_MAX_RSI_SHORT} (too overbought, squeeze risk)")
+                f"RSI {rsi:.1f} > {LLM_BACKUP_MAX_RSI_SHORT} (squeeze risk)")
 
     # ── Gate 4: Volume ───────────────────────────────────────────────────
     if vol_ratio < LLM_BACKUP_MIN_VOL_RATIO:
         return _backup_reject(symbol, direction,
-            f"Volume {vol_ratio:.1f}x < {LLM_BACKUP_MIN_VOL_RATIO}x (no conviction)")
+            f"Volume {vol_ratio:.1f}x < {LLM_BACKUP_MIN_VOL_RATIO}x")
 
     # ── Gate 5: Funding rate extremes ────────────────────────────────────
     if direction == 'LONG' and funding > LLM_BACKUP_MAX_FUNDING_LONG:
         return _backup_reject(symbol, direction,
-            f"Funding {funding:.4f}% > {LLM_BACKUP_MAX_FUNDING_LONG}% (crowded LONG)")
+            f"Funding {funding:.4f}% > {LLM_BACKUP_MAX_FUNDING_LONG}%")
     if direction == 'SHORT' and funding < LLM_BACKUP_MAX_FUNDING_SHORT:
         return _backup_reject(symbol, direction,
-            f"Funding {funding:.4f}% < {LLM_BACKUP_MAX_FUNDING_SHORT}% (crowded SHORT)")
+            f"Funding {funding:.4f}% < {LLM_BACKUP_MAX_FUNDING_SHORT}%")
 
-    # ── Gate 6: Momentum alignment (1h should agree with direction) ──────
+    # ── Gate 6: Momentum alignment ───────────────────────────────────────
     if direction == 'LONG' and change_1h < -1.0:
         return _backup_reject(symbol, direction,
-            f"1h momentum {change_1h:+.2f}% bearish vs LONG signal")
+            f"1h momentum {change_1h:+.2f}% bearish vs LONG")
     if direction == 'SHORT' and change_1h > 1.0:
         return _backup_reject(symbol, direction,
-            f"1h momentum {change_1h:+.2f}% bullish vs SHORT signal")
+            f"1h momentum {change_1h:+.2f}% bullish vs SHORT")
 
     # ── Gate 7: EMA confirmation ─────────────────────────────────────────
     if direction == 'LONG' and ema_50 > 0 and current < ema_50 * 0.97:
         return _backup_reject(symbol, direction,
-            f"Price {current:.6f} < EMA50*0.97 {ema_50*0.97:.6f} (below trend)")
+            f"Price below EMA50*0.97 (downtrend)")
     if direction == 'SHORT' and ema_50 > 0 and current > ema_50 * 1.03:
         return _backup_reject(symbol, direction,
-            f"Price {current:.6f} > EMA50*1.03 {ema_50*1.03:.6f} (above trend)")
+            f"Price above EMA50*1.03 (uptrend)")
 
-    # ── All gates passed — approve with backup confidence ────────────────
-    # Build a reason string from the key indicators
-    conf = 0.4  # Lower confidence than LLM (we're less sophisticated)
-    reason_parts = [
-        f"score={score}",
-        f"RSI={rsi:.0f}",
-        f"vol={vol_ratio:.1f}x",
-        f"1h={change_1h:+.1f}%",
-    ]
+    # ── All gates passed ─────────────────────────────────────────────────
+    conf = 0.4
+    reason_parts = [f"score={score}", f"RSI={rsi:.0f}", f"vol={vol_ratio:.1f}x", f"1h={change_1h:+.1f}%"]
     if breakout:
         reason_parts.append("breakout")
         conf += 0.1
     if vol_ratio > 2.0:
-        conf += 0.1  # High volume = more confident
+        conf += 0.1
 
     reason = f"🛡️ BACKUP OK: {', '.join(reason_parts)}"
+    print(f"  🛡️ BACKUP APPROVED {symbol} {direction}: {reason}")
 
-    result = {
+    return {
         'approved': True,
         'reason': reason,
-        'confidence': min(conf, 0.6),  # Cap confidence at 0.6 for backup
+        'confidence': min(conf, 0.6),
         'model': 'rule_based_backup',
         'provider': 'backup',
         'tokens_in': 0,
         'tokens_out': 0,
         'latency_ms': 0,
     }
-    print(f"  🛡️ BACKUP APPROVED {symbol} {direction}: {reason}")
-    return result
 
 
 def _backup_reject(symbol, direction, reason):
-    """Helper: return a rejection result from the backup analyzer."""
     full_reason = f"🛡️ BACKUP REJECT: {reason}"
     print(f"  🛡️ BACKUP REJECTED {symbol} {direction}: {reason}")
     return {
@@ -396,11 +425,9 @@ def _backup_reject(symbol, direction, reason):
 
 def parse_llm_response(content):
     """Parse JSON from LLM response. Returns dict or None."""
-
     if not content:
         return None
 
-    # Clean up — remove markdown code blocks if present
     text = content.strip()
     if text.startswith('```'):
         lines = text.split('\n')
@@ -414,7 +441,6 @@ def parse_llm_response(content):
     except json.JSONDecodeError:
         pass
 
-    # Fallback: try to find YES/NO in text
     if 'YES' in text.upper() and 'NO' not in text.upper().replace('YES', ''):
         return {'decision': 'YES', 'confidence': 0.5, 'reason': text[:100]}
     elif 'NO' in text.upper():
@@ -424,53 +450,34 @@ def parse_llm_response(content):
 
 
 def analyze_signal(analysis, force=False):
-    """
-    Main entry point — analyze a signal with LLM.
-
-    Args:
-        analysis: dict from analyze_symbol() with all indicators
-        force: bypass cache and minimum score check
-
-    Returns:
-        dict with keys: approved (bool), reason (str), model (str),
-                         tokens_in (int), tokens_out (int), latency_ms (int)
-    """
+    """Main entry point — analyze a signal with LLM."""
 
     symbol = analysis.get('symbol', '')
     direction = analysis.get('direction', '')
     score = analysis.get('runner_score', 0)
 
-    # Check if enabled
     if not LLM_ENABLED and not force:
         return {
             'approved': True,
             'reason': 'LLM disabled',
             'model': None,
-            'tokens_in': 0,
-            'tokens_out': 0,
-            'latency_ms': 0,
+            'tokens_in': 0, 'tokens_out': 0, 'latency_ms': 0,
         }
 
-    # Check minimum score
     if score < LLM_MIN_SCORE and not force:
         return {
             'approved': True,
             'reason': f'Score {score} < {LLM_MIN_SCORE}, skipped LLM',
-            'model': 'skipped',
-            'confidence': 0,
-            'tokens_in': 0,
-            'tokens_out': 0,
-            'latency_ms': 0,
+            'model': 'skipped', 'confidence': 0,
+            'tokens_in': 0, 'tokens_out': 0, 'latency_ms': 0,
         }
 
-    # Check cache
     cache_key = _get_cache_key(symbol, direction, score)
     if _is_cache_valid(cache_key):
         cached = _analysis_cache[cache_key]
         print(f"  🧠 LLM cache hit: {symbol}")
         return cached['result']
 
-    # Build prompt and call
     prompt = format_analysis_prompt(analysis)
     print(f"  🧠 LLM analyzing {symbol} {direction} (score:{score})...")
 
@@ -479,42 +486,59 @@ def analyze_signal(analysis, force=False):
     latency_ms = int((time.time() - start) * 1000)
 
     if not response:
-        # ── All LLM providers failed — use configured backup mode ────────
+        # ── All LLM providers failed — use backup mode ───────────────────
         if LLM_BACKUP_MODE == "fail_closed":
             result = {
                 'approved': False,
                 'reason': 'LLM unavailable + fail-closed mode',
-                'model': LLM_MODEL,
-                'provider': None,
-                'tokens_in': 0,
-                'tokens_out': 0,
-                'latency_ms': latency_ms,
+                'model': LLM_MODEL, 'provider': None,
+                'tokens_in': 0, 'tokens_out': 0, 'latency_ms': latency_ms,
             }
-            print(f"  🔒 FAIL-CLOSED: rejected {symbol} {direction} (all LLM down)")
+            print(f"  🔒 FAIL-CLOSED: rejected {symbol}")
         elif LLM_BACKUP_MODE == "fail_open":
             result = {
                 'approved': True,
                 'reason': 'LLM call failed, fail-open',
-                'model': LLM_MODEL,
-                'provider': None,
-                'tokens_in': 0,
-                'tokens_out': 0,
-                'latency_ms': latency_ms,
+                'model': LLM_MODEL, 'provider': None,
+                'tokens_in': 0, 'tokens_out': 0, 'latency_ms': latency_ms,
             }
-            print(f"  ⚠️ FAIL-OPEN: approved {symbol} {direction} (all LLM down)")
+            print(f"  ⚠️ FAIL-OPEN: approved {symbol}")
         else:
-            # Default: rule_based backup
             result = rule_based_backup(analysis)
             result['latency_ms'] = latency_ms
 
         _analysis_cache[cache_key] = {'result': result, 'ts': time.time()}
         return result
 
-    # Parse response
+    # ── Handle tool_call result (reasoning models) ───────────────────────
+    if response.get('tool_call_result'):
+        tc = response['tool_call_result']
+        decision = tc.get('decision', 'YES').upper()
+        approved = decision == 'YES'
+        reason = tc.get('reason', 'No reason')
+        confidence = tc.get('confidence', 0.5)
+
+        result = {
+            'approved': approved,
+            'reason': reason,
+            'confidence': confidence,
+            'model': LLM_FALLBACK1_MODEL if response.get('provider') == 'fallback' else LLM_MODEL,
+            'provider': response.get('provider', 'nous'),
+            'tokens_in': response['tokens_in'],
+            'tokens_out': response['tokens_out'],
+            'latency_ms': latency_ms,
+        }
+        _analysis_cache[cache_key] = {'result': result, 'ts': time.time()}
+
+        status = "✅ APPROVED" if approved else "❌ REJECTED"
+        print(f"  🧠 LLM: {status} — {reason} ({latency_ms}ms)")
+        return result
+
+    # ── Handle content result (standard models) ──────────────────────────
     parsed = parse_llm_response(response['content'])
 
     if not parsed:
-        # Parse failed — use backup mode instead of blind fail-open
+        # Parse failed — use backup mode
         if LLM_BACKUP_MODE == "fail_closed":
             result = {
                 'approved': False,
@@ -536,7 +560,6 @@ def analyze_signal(analysis, force=False):
                 'latency_ms': latency_ms,
             }
         else:
-            # rule_based: LLM responded but garbage — run backup rules
             result = rule_based_backup(analysis)
             result['latency_ms'] = latency_ms
             result['tokens_in'] = response['tokens_in']
@@ -545,7 +568,6 @@ def analyze_signal(analysis, force=False):
         _analysis_cache[cache_key] = {'result': result, 'ts': time.time()}
         return result
 
-    # Build result
     decision = parsed.get('decision', 'YES').upper()
     approved = decision == 'YES'
     reason = parsed.get('reason', 'No reason given')
@@ -562,7 +584,6 @@ def analyze_signal(analysis, force=False):
         'latency_ms': latency_ms,
     }
 
-    # Cache result
     _analysis_cache[cache_key] = {'result': result, 'ts': time.time()}
 
     status = "✅ APPROVED" if approved else "❌ REJECTED"
@@ -572,16 +593,7 @@ def analyze_signal(analysis, force=False):
 
 
 def batch_analyze(signals, max_concurrent=3):
-    """
-    Analyze multiple signals sequentially.
-    (Kept simple — no async needed for 3-5 candidates)
-
-    Args:
-        signals: list of analysis dicts from analyze_symbol()
-
-    Returns:
-        list of (analysis, llm_result) tuples
-    """
+    """Analyze multiple signals sequentially."""
     results = []
     for analysis in signals:
         result = analyze_signal(analysis)
@@ -591,7 +603,6 @@ def batch_analyze(signals, max_concurrent=3):
 
 # === CLI test ===
 if __name__ == "__main__":
-    # Quick test with fake data
     test_analysis = {
         'symbol': 'SOLUSDT',
         'direction': 'LONG',

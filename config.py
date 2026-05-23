@@ -60,19 +60,19 @@ BTC_REGIME_CHECK = True         # Skip LONG if BTC bearish, SHORT if bullish
 DYNAMIC_COINS_ENABLED = True
 DYNAMIC_MIN_VOLUME = 5_000_000  # 2026-05-22: $2M→$5M — only liquid coins (no low-vol traps)
 
-# ── LLM ANALYZER ────────────────────────────────────────────────────────────
+# ── LLM ANALYZER (2026-05-22: claude-haiku-4.5 + mimo-v2.5-pro) ───────────
 LLM_ENABLED = True
-LLM_MODEL = "nousresearch/hermes-4-70b"
-LLM_MIN_SCORE = 6               # 2026-05-22: 4→6 — LLM only analyzes high-scoring signals
+LLM_MODEL = "anthropic/claude-haiku-4.5"         # Tier 1: fast, reliable, content-based JSON
+LLM_MIN_SCORE = 6               # LLM only analyzes high-scoring signals
 LLM_TEMPERATURE = 0.1
 LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
 LLM_TIMEOUT = 15
 
-LLM_FALLBACK1_ENABLED = False
-LLM_FALLBACK1_BASE_URL = ""
-LLM_FALLBACK1_MODEL = ""
+LLM_FALLBACK1_ENABLED = True
+LLM_FALLBACK1_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
+LLM_FALLBACK1_MODEL = "xiaomi/mimo-v2.5-pro"    # Tier 2: reasoning model, uses tool_calls
 
-LLM_FALLBACK2_ENABLED = False
+LLM_FALLBACK2_ENABLED = False   # Disabled — Nous API handles both tiers
 LLM_FALLBACK2_BASE_URL = ""
 LLM_FALLBACK2_MODEL = ""
 
