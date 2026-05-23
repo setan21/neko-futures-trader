@@ -54,7 +54,7 @@ try:
                         LLM_BACKUP_MAX_FUNDING_LONG, LLM_BACKUP_MAX_FUNDING_SHORT)
 except ImportError:
     LLM_ENABLED = True
-    LLM_MODEL = "xiaomi/mimo-v2-pro"
+    LLM_MODEL = "nousresearch/hermes-4-70b"
     LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
     LLM_MIN_SCORE = 4
     LLM_TEMPERATURE = 0.1

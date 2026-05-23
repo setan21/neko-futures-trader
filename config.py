@@ -62,7 +62,7 @@ DYNAMIC_MIN_VOLUME = 5_000_000  # 2026-05-22: $2M→$5M — only liquid coins (n
 
 # ── LLM ANALYZER ────────────────────────────────────────────────────────────
 LLM_ENABLED = True
-LLM_MODEL = "xiaomi/mimo-v2-pro"
+LLM_MODEL = "nousresearch/hermes-4-70b"
 LLM_MIN_SCORE = 6               # 2026-05-22: 4→6 — LLM only analyzes high-scoring signals
 LLM_TEMPERATURE = 0.1
 LLM_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
