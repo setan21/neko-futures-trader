@@ -68,6 +68,14 @@ CHECK_INTERVAL = 15  # seconds (reduced from 60 — TP1 was missing price spikes
 def get_sig(params):
     return hmac.new(SECRET.encode(), params.encode(), hashlib.sha256).hexdigest()
 
+def round_price_str(price, tick_size=0.00001):
+    """Round price to tickSize and return as string (avoids scientific notation for small prices)."""
+    import math
+    tick_str = f"{tick_size:.10f}".rstrip('0')
+    decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
+    floored = math.floor(price / tick_size) * tick_size
+    return f"{floored:.{decimals}f}"
+
 def should_move_sl_to_breakeven(entry, current, sl, side, profit_threshold=1.0):
     """Move SL to breakeven when profit > threshold%"""
     if side == 'LONG':
@@ -159,9 +167,9 @@ def update_sl_to_breakeven(symbol, side, new_sl, tp_price=None):
                         tick_size = float(f.get('tickSize', 0.00001))
                 break
         import math
-        new_sl_rounded = float(math.floor(new_sl / tick_size) * tick_size)
+        new_sl_rounded = round_price_str(new_sl, tick_size)
     except:
-        new_sl_rounded = new_sl
+        new_sl_rounded = f"{new_sl}"
     
     # Place new SL
     params = f'symbol={symbol}&side={close_side}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={new_sl_rounded}&stopPrice={new_sl_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts}'
@@ -177,9 +185,9 @@ def update_sl_to_breakeven(symbol, side, new_sl, tp_price=None):
     # Replace TP if provided (cancel_algo_orders killed it)
     if tp_price:
         try:
-            tp_rounded = float(math.floor(tp_price / tick_size) * tick_size)
+            tp_rounded = round_price_str(tp_price, tick_size)
         except:
-            tp_rounded = tp_price
+            tp_rounded = f"{tp_price}"
         ts2 = int(time.time() * 1000)
         tp_params = f'symbol={symbol}&side={close_side}&type=TAKE_PROFIT_MARKET&orderType=TAKE_PROFIT_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={tp_rounded}&stopPrice={tp_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts2}'
         tp_sig = get_sig(tp_params)
@@ -213,9 +221,9 @@ def update_tp_trailing(symbol, side, new_tp, sl_price=None):
                         tick_size = float(f.get('tickSize', 0.00001))
                 break
         import math
-        new_tp_rounded = float(math.floor(new_tp / tick_size) * tick_size)
+        new_tp_rounded = round_price_str(new_tp, tick_size)
     except:
-        new_tp_rounded = new_tp
+        new_tp_rounded = f"{new_tp}"
     
     # Place new TP
     ts = int(time.time() * 1000)
@@ -232,9 +240,9 @@ def update_tp_trailing(symbol, side, new_tp, sl_price=None):
     # Replace SL if provided (cancel_algo_orders killed it)
     if sl_price:
         try:
-            sl_rounded = float(math.floor(sl_price / tick_size) * tick_size)
+            sl_rounded = round_price_str(sl_price, tick_size)
         except:
-            sl_rounded = sl_price
+            sl_rounded = f"{sl_price}"
         ts2 = int(time.time() * 1000)
         sl_params = f'symbol={symbol}&side={close_side}&type=STOP_MARKET&orderType=STOP_MARKET&algoType=CONDITIONAL&quantity=0&triggerPrice={sl_rounded}&stopPrice={sl_rounded}&workingType=CONTRACT_PRICE&closePosition=true&timestamp={ts2}'
         sl_sig = get_sig(sl_params)
@@ -431,9 +439,7 @@ def place_sl_tp_only(symbol, side, quantity, sl_price, tp_price):
         tick_size = 0.00001
     
     def round_to_tick(price, tick):
-        tick_str = f"{tick:.10f}".rstrip('0')
-        decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
-        return float(f"{price:.{decimals}f}")
+        return round_price_str(price, tick)
     
     sl_trigger = round_to_tick(sl_price, tick_size)
     tp_trigger = round_to_tick(tp_price, tick_size)
@@ -794,16 +800,10 @@ def main():
                                             if f.get('filterType') == 'PRICE_FILTER':
                                                 tick_size = float(f.get('tickSize', 0.00001))
                                         break
-                                import math
-                                # Round to tickSize multiple AND format to correct decimals
-                                tick_str = f"{tick_size:.10f}".rstrip('0')
-                                decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
-                                sl_floor = math.floor(sl_price / tick_size) * tick_size
-                                tp_floor = math.floor(tp_price / tick_size) * tick_size
-                                sl_rounded = float(f"{sl_floor:.{decimals}f}")
-                                tp_rounded = float(f"{tp_floor:.{decimals}f}")
+                                sl_rounded = round_price_str(sl_price, tick_size)
+                                tp_rounded = round_price_str(tp_price, tick_size)
                             except:
-                                sl_rounded, tp_rounded = sl_price, tp_price
+                                sl_rounded, tp_rounded = f"{sl_price}", f"{tp_price}"
 
                             if not has_sl:
                                 print(f"  {symbol}: [HEAL] Missing SL — placing @ {sl_rounded}")
