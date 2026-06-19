@@ -1,0 +1,40 @@
+{
+  "total_trades": 231,
+  "wins": 134,
+  "losses": 97,
+  "total_pnl": 8949.819659359993,
+  "best_trade": 4600.6422919999995,
+  "worst_trade": -3911.7891614999994,
+  "by_side": {
+    "LONG": {
+      "wins": 114,
+      "losses": 92,
+      "pnl": 970.9996213599944
+    },
+    "SHORT": {
+      "wins": 20,
+      "losses": 5,
+      "pnl": 7978.820038
+    }
+  },
+  "by_reason": {
+    "TIME_TP": {
+      "count": 23,
+      "pnl": 22867.754084300002
+    },
+    "TIMEOUT_LOSS": {
+      "count": 2,
+      "pnl": -2557.88544904
+    },
+    "INSTANT_CUT": {
+      "count": 4,
+      "pnl": -11472.036241499998
+    },
+    "STOP_LOSS": {
+      "count": 202,
+      "pnl": 111.98726559999352
+    }
+  },
+  "created_at": "2026-06-08T01:50:31.177277",
+  "win_rate": 58.00865800865801
+}

@@ -3,6 +3,24 @@
 Simplified Scanner v8 - Aggressive momentum trading
 """
 
+
+# === PAPER TRADING MODE ===
+import os
+PAPER_TRADING = os.environ.get("PAPER_TRADING", "false").lower() == "true"
+
+if PAPER_TRADING:
+    from paper_trading_mode import (
+        paper_place_order,
+        paper_place_algo_order,
+        paper_get_open_algo_orders,
+        paper_get_position_risk,
+        paper_get_account,
+        paper_get_balance,
+        paper_get_positions
+    )
+    print("📝 PAPER TRADING MODE ENABLED - No real funds at risk!")
+# === END PAPER TRADING MODE ===
+
 import math
 import os
 import json
@@ -12,6 +30,11 @@ import hashlib
 import requests
 from datetime import datetime
 from signal_filter import filter_signal
+try:
+    from smc_scoring import calculate_smc_bonus
+    SMC_SCORING_AVAILABLE = True
+except ImportError:
+    SMC_SCORING_AVAILABLE = False
 
 # Import LLM analyzer (hybrid AI gate)
 try:
@@ -130,6 +153,8 @@ def binance_post(url, params):
 # === GET DATA ===
 def get_balance():
     """Return totalMarginBalance (includes unrealized PnL)"""
+    if PAPER_TRADING:
+        return paper_get_balance()
     ts = int(time.time() * 1000)
     params = "timestamp={}".format(ts)
     sig = get_signature(params)
@@ -142,6 +167,8 @@ def get_balance():
             return 0
 
 def get_positions():
+    if PAPER_TRADING:
+        return paper_get_positions()
     ts = int(time.time() * 1000)
     params = "timestamp={}".format(ts)
     sig = get_signature(params)
@@ -366,6 +393,7 @@ def cleanup_orphan_orders():
         
         cancelled = 0
         for o in algo_orders:
+            if not isinstance(o, dict): continue
             sym = o.get('symbol', '')
             algo_id = o.get('algoId', '')
             if sym not in positions and algo_id:
@@ -438,6 +466,8 @@ def should_add_trailing_tp(entry, current, tp, side, trailing_percent=1.5):
     return None
 
 def place_order(symbol, side, quantity):
+    if PAPER_TRADING:
+        return paper_place_order(symbol, side, quantity)
     ts = int(time.time() * 1000)
     params = "symbol={}&side={}&type=MARKET&quantity={}&timestamp={}".format(symbol, side, quantity, ts)
     sig = get_signature(params)
@@ -449,8 +479,14 @@ def place_order(symbol, side, quantity):
 
 def place_order_with_sl_tp(symbol, side, quantity, sl_price, tp_price):
     """Place market order FIRST, only add SL/TP if market order succeeds"""
-    ts = int(time.time() * 1000)
+    # Paper trading mode - use paper order
+    if PAPER_TRADING:
+        result = paper_place_order(symbol, side, quantity)
+        # Paper mode handles SL/TP internally via position tracking
+        return result
     
+    ts = int(time.time() * 1000)
+
     # First place the market order
     params = "symbol={}&side={}&type=MARKET&quantity={}&timestamp={}".format(symbol, side, quantity, ts)
     sig = get_signature(params)
@@ -1360,7 +1396,7 @@ def analyze_symbol(symbol, stats, btc_regime='NEUTRAL'):
         weekly_change = ((weekly_close - weekly_open) / weekly_open) * 100
     
     # Multi-timeframe: 4h trend alignment check
-    r_4h = requests.get(f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=10', timeout=10)
+    r_4h = requests.get(f'https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=50', timeout=10)
     h4_candles = r_4h.json()
     h4_trend = 'NEUTRAL'
     h4_change = 0
@@ -1797,6 +1833,44 @@ def analyze_symbol(symbol, stats, btc_regime='NEUTRAL'):
                 short_score -= 2
         
         runner_score = short_score
+    # === SMC/ICT CONFLUENCE BONUS (2026-06-15) ===
+    # Adds 0-8 bonus points based on Smart Money Concepts alignment
+    # Checks: market structure, impulse system, order blocks, FVG, liquidity, Fibonacci
+    try:
+        _smc_cfg = globals()
+        if _smc_cfg.get("SMC_BONUS_ENABLED", False) and SMC_SCORING_AVAILABLE:
+            _smc_bonus, _smc_details = calculate_smc_bonus(candles, h4_candles, direction, current)
+            _smc_max = _smc_cfg.get("SMC_MAX_BONUS", 8)
+            _smc_bonus = min(_smc_bonus, _smc_max)
+            
+            # Optional: require minimum structure score
+            _min_struct = _smc_cfg.get("SMC_MIN_STRUCTURE_SCORE", 0)
+            _struct_detail = _smc_details.get("structure", "")
+            if _min_struct > 0 and "+0" in _struct_detail and "error" not in _struct_detail:
+                _smc_bonus = 0
+                _smc_details["smc_vetoed"] = "no structure alignment"
+            
+            # Optional: impulse system veto
+            if _smc_cfg.get("SMC_REQUIRE_IMPULSE", False):
+                _imp_detail = _smc_details.get("impulse", "")
+                if direction == "LONG" and "counter-impulse" in _imp_detail:
+                    _smc_bonus = 0
+                    _smc_details["smc_vetoed"] = "RED impulse blocks LONG"
+                elif direction == "SHORT" and "counter-impulse" in _imp_detail:
+                    _smc_bonus = 0
+                    _smc_details["smc_vetoed"] = "GREEN impulse blocks SHORT"
+            
+            if _smc_bonus > 0:
+                runner_score += _smc_bonus
+                _smc_parts = [v for k, v in _smc_details.items() if "+" in str(v) and k != "smc_vetoed"]
+                _smc_str = " | ".join(_smc_parts)
+                print(f'[SMC +{_smc_bonus}] {_smc_str}', end=' ', flush=True)
+            else:
+                _veto = _smc_details.get("smc_vetoed", "")
+                if _veto:
+                    print(f"[SMC +0 veto:{_veto}]", end=" ", flush=True)
+    except Exception as _smc_e:
+        print(f"[SMC err:{_smc_e}]", end=" ", flush=True)
     
     # Sleep mode check - use appropriate MIN_SCORE
     if SLEEP_MODE:
@@ -1887,6 +1961,33 @@ def analyze_symbol(symbol, stats, btc_regime='NEUTRAL'):
         else:
             print(f"(chase_short={price_change:.1f}%<-{_chase_limit:.0f}%)", end=" ", flush=True)
             return None
+    
+    # === QUALITY FILTERS (2026-06-07) ===
+    # ADX minimum: only enter on trending markets, not choppy
+    if adx_value < 20 and not _is_tradfi:
+        print(f"(adx={adx_value:.1f}<20_choppy)", end=" ", flush=True)
+        return None
+    
+    # RSI range filter: avoid extreme zones
+    if direction == "LONG" and rsi_14 > 65:
+        print(f"(rsi_high={rsi_14:.1f}>65)", end=" ", flush=True)
+        return None
+    if direction == "SHORT" and rsi_14 < 35:
+        print(f"(rsi_low={rsi_14:.1f}<35)", end=" ", flush=True)
+        return None
+    
+    # Volume spike confirmation: need > 1.5x avg volume for entry
+    if vol_ratio < 1.5 and not _is_tradfi:
+        print(f"(vol_low={vol_ratio:.1f}x<1.5)", end=" ", flush=True)
+        return None
+    
+    # EMA alignment: 9 EMA must be above/below 21 EMA for direction
+    if direction == "LONG" and ema_9 and ema_21 and ema_9 < ema_21:
+        print(f"(ema_misalign:9<{ema_21:.1f})", end=" ", flush=True)
+        return None
+    if direction == "SHORT" and ema_9 and ema_21 and ema_9 > ema_21:
+        print(f"(ema_misalign:9>{ema_21:.1f})", end=" ", flush=True)
+        return None
     
     # Hard RSI reject: never enter LONG with RSI > 68 (momentum exhaustion guaranteed)
     # 2026-05-12: BCH entered at RSI 66.9, now -3.75%. Hard cutoff prevents this.
@@ -2137,15 +2238,22 @@ def analyze_symbol(symbol, stats, btc_regime='NEUTRAL'):
         print(f"(score={runner_score}/{min_score}_post_bonus)", end=" ", flush=True)
         return None
 
-    # SL/TP based on percentage (PRICE_SL / PRICE_TP)
+    # SL/TP — ATR-based dynamic SL with config fallback
+    # Use ATR * 1.5 for SL if ATR is available and reasonable (2-6% range)
+    atr_sl_pct = (atr / current * 100) * 1.5 if current > 0 else PRICE_SL
+    # Clamp ATR SL between 3% and 6% to avoid extreme values
+    effective_sl = max(3.0, min(6.0, atr_sl_pct))
+    # Use the wider of ATR-based SL or config SL
+    final_sl_pct = max(effective_sl, PRICE_SL)
+    
     if direction == "LONG":
-        sl = current * (1 - PRICE_SL / 100)
+        sl = current * (1 - final_sl_pct / 100)
         tp1 = current * (1 + PRICE_TP / 100)
     else:
-        sl = current * (1 + PRICE_SL / 100)
+        sl = current * (1 + final_sl_pct / 100)
         tp1 = current * (1 - PRICE_TP / 100)
     tp2 = None
-    sl_method = "PRICE"
+    sl_method = f"ATR({final_sl_pct:.1f}%)"
     
     # Trend
     trend = "BULLISH" if current > (ema_50 or sma_50) else "BEARISH"
@@ -2799,8 +2907,21 @@ def main():
         print(f"  📊 Sector rejections: {total_sector} ({breakdown})")
 
 if __name__ == "__main__":
+    # Position monitor (SL/TP/timeout) for paper mode. Was missing -> zombie positions.
+    _monitor = None
+    if PAPER_TRADING:
+        try:
+            from position_monitor import monitor_positions as _monitor
+        except Exception as _e:
+            print("  monitor import failed: %s" % _e)
     while True:
         try:
+            if _monitor:
+                try:
+                    for _c in (_monitor() or []):
+                        print("  CLOSED %s %s pnl=%.2f (%.1f%%)" % (_c["symbol"], _c["reason"], _c["pnl"], _c["pnl_pct"]))
+                except Exception as _me:
+                    print("  monitor error: %s" % _me)
             main()
         except Exception as e:
             print(f"Error: {e}")

@@ -1,0 +1,19 @@
+[Unit]
+Description=Neko Futures Scanner - Paper Trading Mode
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/neko-futures-trader
+Environment=PAPER_TRADING=true
+Environment=BINANCE_API_KEY=paper_mode
+Environment=BINANCE_SECRET=paper_mode
+ExecStart=/usr/bin/python3 /root/neko-futures-trader/scanner.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/root/neko-futures-trader/logs/scanner.log
+StandardError=append:/root/neko-futures-trader/logs/scanner.log
+
+[Install]
+WantedBy=multi-user.target

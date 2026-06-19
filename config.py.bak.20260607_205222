@@ -15,24 +15,24 @@ ENTRY_PERCENT_SLEEP = 5          # Entry % in SLEEP mode
 MIN_SCORE_SLEEP = 7             # Min score to enter in SLEEP mode
 
 # ── NORMAL MODE ──────────────────────────────────────────────────────────────
-MIN_SCORE_NORMAL = 8  # 2026-06-07: 7→8 — stricter signal quality for higher win rate
+MIN_SCORE_NORMAL = 7  # Auto-tuner v2: Revert to minimum safe threshold (was 6.0)
 
 # ── SL/TP STRATEGY (2026-05-18 OVERHAUL) ────────────────────────────────────
 # Old: SL=5%, TP=15% → 22% WR, big losses. New: SL=3%, TP=8% → tighter risk, better R:R
-PRICE_TP = 8.0                  # 2026-06-07: TP 8% — higher target, better R:R (was 6%)
-PRICE_SL = 4.0                  # 2026-06-07: SL 4% — wider SL to survive noise (was 3%)
+PRICE_TP = 6.0                  # 2026-05-23: TP 6% — lebih sering kena TP, win rate naik
+PRICE_SL = 3.0                  # Stop Loss: -3% for LONG, +3% for SHORT
 
 # ── BREAKEVEN & TRAILING ─────────────────────────────────────────────────────
-MIN_PROFIT_BREAKEVEN = 2.5       # 2026-06-07: 1.5→2.5 — breakeven later, avoid noise stop-out
-TRAIL_SL_LOCK = 1.5              # 2026-06-07: 1.0→1.5 — lock more profit at breakeven
-TRAIL_SL_DISTANCE = 1.5          # 2026-06-07: 1.0→1.5 — wider trail to survive volatility
-MIN_PROFIT_TRAILING_TP = 5.0     # 2026-06-07: 6.0→5.0 — trailing TP starts at 5%
-TRAIL_PERCENT = 2.0              # 2026-06-07: 1.5→2.0 — wider trail TP for bigger moves
+MIN_PROFIT_BREAKEVEN = 1.5       # 2026-05-27: 3.0→1.5 — trailing starts earlier, lock small profits > lose big
+TRAIL_SL_LOCK = 1.0              # 2026-05-27: 1.5→1.0 — lock less at start (earlier activation)
+TRAIL_SL_DISTANCE = 1.0          # 2026-05-27: 1.5→1.0 — tighter trail to protect small profits
+MIN_PROFIT_TRAILING_TP = 6.0    # % profit to activate trailing TP (was 10%)
+TRAIL_PERCENT = 1.5             # Trail TP by this % when trailing (was 2%)
 
 # ── PARTIAL TP (2026-05-18: 3-stage exit) ───────────────────────────────────
-TP1_PERCENT = 3.0               # 2026-06-07: TP1 at 3% — lock profit earlier (was 4%)
+TP1_PERCENT = 4.0               # Close 25% at this % profit (was 5%)
 TP1_CLOSE_PCT = 0.25
-TP2_PERCENT = 5.0               # 2026-06-07: TP2 at 5% — middle step (was 6%)
+TP2_PERCENT = 6.0               # Close another 25% at this % profit (was 10%)
 TP2_CLOSE_PCT = 0.25
 # Remaining 50% runs to PRICE_TP (8%) or trailing TP
 
@@ -48,9 +48,9 @@ NOTIFY_ON_TRAILING_TP = False
 SCAN_INTERVAL = 300             # Scanner run every 5 minutes
 MIN_PRICE_CHANGE = 2.0          # Min % price change for signal (was 3.0, too strict for sideways market)
 SKIP_RECENT_HOURS = 24          # Skip re-entry for 24h after close
-LOSS_COOLDOWN_HOURS = 72  # 2026-06-07: 48→72 — 3 days cooldown after loss (prevent revenge)
-MIN_VOLUME_RATIO = 1.5  # 2026-06-07: 1.2→1.5 — require stronger volume confirmation
-CHASE_LIMIT_CRYPTO = 3.5  # 2026-06-07: 5.0→3.5 — tighter chase limit, avoid pump tops
+LOSS_COOLDOWN_HOURS = 48        # 2026-05-18: Skip re-entry 48h after a LOSS (prevent revenge trading)
+MIN_VOLUME_RATIO = 1.2  # Auto-tuned: 1.5→1.2 (relax volume filter)
+CHASE_LIMIT_CRYPTO = 5.0  # Auto-tuned: 4.0→5.0 (relax chase limit)
 CHASE_LIMIT_TRADFI = 5.0        # Max % change for TradFi entries
 BTC_REGIME_CHECK = True         # 2026-05-8: Skip LONG if BTC 4H trend is bearish
 
@@ -80,7 +80,7 @@ LLM_FALLBACK2_MODEL = "MiniMax-M2.5"
 # ── RISK ─────────────────────────────────────────────────────────────────────
 MAX_MARGIN_PERCENT = 70
 MAX_RISK_PERCENT = 1.5
-MAX_DAILY_LOSS = -200            # 2026-06-07: Re-enabled — stop trading if daily loss > 00
+MAX_DAILY_LOSS = 0               # Disabled 2026-05-25 per user request (was -30 USDT)
 
 # ── SAFE COINS (FALLBACK — only used if DYNAMIC_COINS_ENABLED = False) ───────
 # Static list as backup. Dynamic mode fetches live from Binance API.
@@ -113,9 +113,3 @@ SAFE_COINS = [
     'XAUUSDT','XAGUSDT','XPTUSDT','XPDUSDT',
     'CLUSDT','BZUSDT','NATGASUSDT','COPPERUSDT',
 ]
-
-# ── SMC/ICT SCORING ──────────────────────────────────────────────────────────
-SMC_BONUS_ENABLED = True        # Enable SMC/ICT confluence bonus
-SMC_MAX_BONUS = 8              # Maximum SMC bonus points
-SMC_MIN_STRUCTURE_SCORE = 1    # Minimum structure score for bonus
-SMC_REQUIRE_IMPULSE = False    # If True, RED impulse blocks LONG (and vice versa)
